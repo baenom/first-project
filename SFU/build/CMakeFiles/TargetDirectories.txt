@@ -1,0 +1,3 @@
+/Users/baeuijin/gam/SFU/build/CMakeFiles/sfu_server.dir
+/Users/baeuijin/gam/SFU/build/CMakeFiles/edit_cache.dir
+/Users/baeuijin/gam/SFU/build/CMakeFiles/rebuild_cache.dir

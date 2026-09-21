@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  syncroom_sfu:
+    build: .
+    container_name: syncroom_sfu_server
+    restart: unless-stopped
+    ports:
+      - "9999:9999/udp"
+    environment:
+      - PORT=9999
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
