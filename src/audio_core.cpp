@@ -10,6 +10,9 @@
 #include <algorithm>
 
 #ifdef _WIN32
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #pragma comment(lib, "ws2_32.lib")
@@ -95,7 +98,7 @@ void network_receive_loop() {
                     }
                     float rms = std::sqrt(sum_sq / (samples > 0 ? samples : 1));
                     // 감쇄 적용
-                    g_out_level.store(std::max(rms * 1.5f, g_out_level.load() * 0.85f));
+                    g_out_level.store((std::max)(rms * 1.5f, g_out_level.load() * 0.85f));
                 }
             }
         }
@@ -146,11 +149,11 @@ void audio_io_loop() {
         std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
         std::memcpy(packet.data() + sizeof(AudioPacketHeader), pcm_buffer.data(), audio_header.payload_bytes);
 
-        sendto(g_sockfd, (const char*)packet.data(), packet.size(), 0,
+        sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
                (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
 
         // 입력 레벨 감쇄
-        g_in_level.store(std::max(0.05f, g_in_level.load() * 0.85f));
+        g_in_level.store((std::max)(0.05f, g_in_level.load() * 0.85f));
 
         // 정확한 오디오 버퍼 주기 유지 (휴면)
         auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - frame_start);
@@ -391,7 +394,7 @@ extern "C" {
                         if (peer_list.empty()) {
                             it = rooms.erase(it);
                         } else {
-                            total_active_peers += peer_list.size();
+                            total_active_peers += static_cast<int>(peer_list.size());
                             ++it;
                         }
                     }
