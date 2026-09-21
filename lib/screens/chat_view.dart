@@ -7,11 +7,7 @@ class ChatView extends StatefulWidget {
   final String roomId;
   final String roomName;
 
-  const ChatView({
-    super.key,
-    this.roomId = '1',
-    this.roomName = '우리들만의 합주실',
-  });
+  const ChatView({super.key, this.roomId = '1', this.roomName = '합주실'});
 
   @override
   State<ChatView> createState() => _ChatViewState();
@@ -71,13 +67,13 @@ class _ChatViewState extends State<ChatView> {
           .doc(widget.roomId)
           .collection('chats')
           .add({
-        'text': text,
-        'sender': senderName,
-        'senderEmail': user?.email ?? '',
-        'userId': user?.uid ?? 'anonymous',
-        'timestamp': FieldValue.serverTimestamp(),
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
-      });
+            'text': text,
+            'sender': senderName,
+            'senderEmail': user?.email ?? '',
+            'userId': user?.uid ?? 'anonymous',
+            'timestamp': FieldValue.serverTimestamp(),
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          });
 
       debugPrint('[Firestore] Message successfully sent: $text');
     } catch (e, stack) {
@@ -147,7 +143,11 @@ class _ChatViewState extends State<ChatView> {
               const SizedBox(width: 8),
               Text(
                 '${widget.roomName} 합주실 채팅',
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
               ),
               const SizedBox(width: 12),
               const Text(
@@ -161,7 +161,10 @@ class _ChatViewState extends State<ChatView> {
         // 메시지 리스트 영역
         Expanded(
           child: !_isFirebaseReady
-              ? _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true)
+              ? _buildMessageListView(
+                  _fallbackMessages.reversed.toList(),
+                  isFallback: true,
+                )
               : StreamBuilder<QuerySnapshot>(
                   stream: FirebaseFirestore.instance
                       .collection('jam_rooms')
@@ -171,78 +174,108 @@ class _ChatViewState extends State<ChatView> {
                       .limit(60)
                       .snapshots(),
                   builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                debugPrint('[Firestore Chat Error] ${snapshot.error}');
-                return Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      color: const Color(0xFFDA373C).withValues(alpha: 0.2),
-                      child: Row(
+                    if (snapshot.hasError) {
+                      debugPrint('[Firestore Chat Error] ${snapshot.error}');
+                      return Column(
                         children: [
-                          const Icon(Icons.cloud_off, color: Color(0xFFF23F43), size: 16),
-                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            color: const Color(
+                              0xFFDA373C,
+                            ).withValues(alpha: 0.2),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.cloud_off,
+                                  color: Color(0xFFF23F43),
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Firebase 연결 오류: ${snapshot.error}',
+                                    style: const TextStyle(
+                                      color: Color(0xFFF23F43),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           Expanded(
-                            child: Text(
-                              'Firebase 연결 오류: ${snapshot.error}',
-                              style: const TextStyle(color: Color(0xFFF23F43), fontSize: 11),
+                            child: _buildMessageListView(
+                              _fallbackMessages.reversed.toList(),
+                              isFallback: true,
                             ),
                           ),
                         ],
-                      ),
-                    ),
-                    Expanded(
-                      child: _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true),
-                    ),
-                  ],
-                );
-              }
+                      );
+                    }
 
-              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-                return const Center(
-                  child: CircularProgressIndicator(color: Color(0xFF5865F2)),
-                );
-              }
+                    if (snapshot.connectionState == ConnectionState.waiting &&
+                        !snapshot.hasData) {
+                      return const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF5865F2),
+                        ),
+                      );
+                    }
 
-              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                if (_fallbackMessages.isNotEmpty) {
-                  return _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true);
-                }
-                return _buildEmptyState();
-              }
+                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                      if (_fallbackMessages.isNotEmpty) {
+                        return _buildMessageListView(
+                          _fallbackMessages.reversed.toList(),
+                          isFallback: true,
+                        );
+                      }
+                      return _buildEmptyState();
+                    }
 
-              final docs = snapshot.data!.docs;
-              final myUser = _currentUser;
-              final messages = docs.map((doc) {
-                final data = doc.data() as Map<String, dynamic>;
-                final sender = (data['sender'] as String?) ?? '익명';
-                final text = (data['text'] as String?) ?? '';
-                final senderEmail = (data['senderEmail'] as String?) ?? '';
-                final userId = (data['userId'] as String?) ?? '';
+                    final docs = snapshot.data!.docs;
+                    final myUser = _currentUser;
+                    final messages = docs.map((doc) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      final sender = (data['sender'] as String?) ?? '익명';
+                      final text = (data['text'] as String?) ?? '';
+                      final senderEmail =
+                          (data['senderEmail'] as String?) ?? '';
+                      final userId = (data['userId'] as String?) ?? '';
 
-                final isMe = (myUser != null && (myUser.uid == userId || (myUser.email != null && myUser.email == senderEmail)))
-                    || (myUser == null && sender == _getSenderName());
+                      final isMe =
+                          (myUser != null &&
+                              (myUser.uid == userId ||
+                                  (myUser.email != null &&
+                                      myUser.email == senderEmail))) ||
+                          (myUser == null && sender == _getSenderName());
 
-                String timeStr = '방금';
-                if (data['timestamp'] is Timestamp) {
-                  final dt = (data['timestamp'] as Timestamp).toDate();
-                  timeStr = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-                } else if (data['createdAt'] is int) {
-                  final dt = DateTime.fromMillisecondsSinceEpoch(data['createdAt'] as int);
-                  timeStr = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-                }
+                      String timeStr = '방금';
+                      if (data['timestamp'] is Timestamp) {
+                        final dt = (data['timestamp'] as Timestamp).toDate();
+                        timeStr =
+                            '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                      } else if (data['createdAt'] is int) {
+                        final dt = DateTime.fromMillisecondsSinceEpoch(
+                          data['createdAt'] as int,
+                        );
+                        timeStr =
+                            '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                      }
 
-                return {
-                  'sender': sender,
-                  'text': text,
-                  'time': timeStr,
-                  'isMe': isMe,
-                };
-              }).toList();
+                      return {
+                        'sender': sender,
+                        'text': text,
+                        'time': timeStr,
+                        'isMe': isMe,
+                      };
+                    }).toList();
 
-              return _buildMessageListView(messages, isFallback: false);
-            },
-          ),
+                    return _buildMessageListView(messages, isFallback: false);
+                  },
+                ),
         ),
 
         // 하단 입력창 영역
@@ -257,7 +290,11 @@ class _ChatViewState extends State<ChatView> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.add_circle, color: Color(0xFFB5BAC1), size: 20),
+                const Icon(
+                  Icons.add_circle,
+                  color: Color(0xFFB5BAC1),
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: TextField(
@@ -265,7 +302,10 @@ class _ChatViewState extends State<ChatView> {
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: const InputDecoration(
                       hintText: '#채팅 및 링크 공유 채널에 메시지 보내기...',
-                      hintStyle: TextStyle(color: Color(0xFF80848E), fontSize: 13),
+                      hintStyle: TextStyle(
+                        color: Color(0xFF80848E),
+                        fontSize: 13,
+                      ),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(vertical: 14),
                     ),
@@ -294,7 +334,11 @@ class _ChatViewState extends State<ChatView> {
           SizedBox(height: 12),
           Text(
             '아직 메시지가 없습니다.',
-            style: TextStyle(color: Color(0xFF949BA4), fontSize: 15, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: Color(0xFF949BA4),
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+            ),
           ),
           SizedBox(height: 4),
           Text(
@@ -306,7 +350,10 @@ class _ChatViewState extends State<ChatView> {
     );
   }
 
-  Widget _buildMessageListView(List<Map<String, dynamic>> messages, {required bool isFallback}) {
+  Widget _buildMessageListView(
+    List<Map<String, dynamic>> messages, {
+    required bool isFallback,
+  }) {
     if (messages.isEmpty) {
       return _buildEmptyState();
     }
@@ -329,10 +376,16 @@ class _ChatViewState extends State<ChatView> {
             children: [
               CircleAvatar(
                 radius: 18,
-                backgroundColor: isMe ? const Color(0xFF5865F2) : const Color(0xFF23A55A),
+                backgroundColor: isMe
+                    ? const Color(0xFF5865F2)
+                    : const Color(0xFF23A55A),
                 child: Text(
                   sender.isNotEmpty ? sender[0].toUpperCase() : 'U',
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -345,7 +398,9 @@ class _ChatViewState extends State<ChatView> {
                         Text(
                           sender,
                           style: TextStyle(
-                            color: isMe ? const Color(0xFF7983F5) : Colors.white,
+                            color: isMe
+                                ? const Color(0xFF7983F5)
+                                : Colors.white,
                             fontWeight: FontWeight.bold,
                             fontSize: 13,
                           ),
@@ -353,14 +408,21 @@ class _ChatViewState extends State<ChatView> {
                         const SizedBox(width: 8),
                         Text(
                           time,
-                          style: const TextStyle(color: Color(0xFF949BA4), fontSize: 10),
+                          style: const TextStyle(
+                            color: Color(0xFF949BA4),
+                            fontSize: 10,
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 4),
                     Text(
                       text,
-                      style: const TextStyle(color: Color(0xFFDBDEE1), fontSize: 14, height: 1.3),
+                      style: const TextStyle(
+                        color: Color(0xFFDBDEE1),
+                        fontSize: 14,
+                        height: 1.3,
+                      ),
                     ),
                   ],
                 ),

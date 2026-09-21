@@ -24,11 +24,7 @@ class LobbyScreen extends StatefulWidget {
   final String roomId;
   final String roomName;
 
-  const LobbyScreen({
-    super.key,
-    this.roomId = '1',
-    this.roomName = '우리들만의 합주실',
-  });
+  const LobbyScreen({super.key, this.roomId = '1', this.roomName = '합주실'});
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();

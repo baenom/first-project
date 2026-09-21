@@ -70,7 +70,8 @@ class JamRoom {
         ? (hostUid == currentUserId)
         : (currentUserId.isEmpty);
     final iconCode = (data['iconCode'] as int?) ?? Icons.music_note.codePoint;
-    final publicIp = (data['hostPublicIp'] as String?) ??
+    final publicIp =
+        (data['hostPublicIp'] as String?) ??
         (data['hostTailscaleIp'] as String?) ??
         '';
     final tailscale = (data['hostTailscaleIp'] as String?) ?? '';
@@ -112,10 +113,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   final List<JamRoom> _rooms = [
     JamRoom(
       id: '1',
-      name: '우리들만의 합주실',
+      name: '합주실',
       roomId: 1,
       icon: Icons.music_note,
-      description: '메인 밴드 정기 합주 공간 (로컬 호스트)',
+      description: '합주 공간 (로컬 호스트)',
       isHost: true,
       remoteIp: '127.0.0.1',
     ),
@@ -124,9 +125,13 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   StreamSubscription<QuerySnapshot>? _roomsSub;
 
   JamRoom get _currentRoom =>
-      (_rooms.isNotEmpty && _selectedRoomIndex >= 0 && _selectedRoomIndex < _rooms.length)
-          ? _rooms[_selectedRoomIndex]
-          : (_rooms.isNotEmpty ? _rooms.first : JamRoom(id: '1', name: '우리들만의 합주실', roomId: 1));
+      (_rooms.isNotEmpty &&
+          _selectedRoomIndex >= 0 &&
+          _selectedRoomIndex < _rooms.length)
+      ? _rooms[_selectedRoomIndex]
+      : (_rooms.isNotEmpty
+            ? _rooms.first
+            : JamRoom(id: '1', name: '합주실', roomId: 1));
 
   @override
   void initState() {
@@ -154,41 +159,66 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
             .collection('jam_rooms')
             .orderBy('createdAt', descending: false)
             .snapshots()
-            .listen((snapshot) {
-          if (snapshot.docs.isNotEmpty) {
-            final loaded = snapshot.docs
-                .map((d) => JamRoom.fromFirestore(d, currentUid))
-                .toList();
-            if (mounted) {
-              setState(() {
-                _rooms.clear();
-                _rooms.addAll(loaded);
-                if (_selectedRoomIndex >= _rooms.length && _selectedRoomIndex != -1) {
-                  _selectedRoomIndex = _rooms.isEmpty ? -1 : 0;
-                }
-              });
-              if (_selectedRoomIndex >= 0 && _selectedRoomIndex < _rooms.length) {
-                final cur = _currentRoom;
-                if (cur.isHost) {
-                  if (!_audioEngine.isSfuServerRunning) {
-                    _audioEngine.startHostSfu(port: cur.port);
+            .listen(
+              (snapshot) {
+                if (snapshot.docs.isNotEmpty) {
+                  final loaded = snapshot.docs
+                      .map((d) => JamRoom.fromFirestore(d, currentUid))
+                      .toList();
+                  if (mounted) {
+                    setState(() {
+                      _rooms.clear();
+                      _rooms.addAll(loaded);
+                      if (_rooms.isEmpty) {
+                        _selectedRoomIndex = -1;
+                      } else if (_selectedRoomIndex >= _rooms.length ||
+                          _selectedRoomIndex < 0) {
+                        _selectedRoomIndex = 0;
+                      }
+                    });
+                    if (_selectedRoomIndex >= 0 &&
+                        _selectedRoomIndex < _rooms.length) {
+                      final cur = _currentRoom;
+                      if (cur.isHost) {
+                        if (!_audioEngine.isSfuServerRunning) {
+                          _audioEngine.startHostSfu(port: cur.port);
+                        }
+                        _audioEngine.configureSfu(
+                          '127.0.0.1',
+                          cur.port,
+                          cur.roomId,
+                          _audioEngine.userId,
+                        );
+                      } else {
+                        if (_audioEngine.isSfuServerRunning) {
+                          _audioEngine.stopHostSfu();
+                        }
+                        final remote = cur.effectivePublicIp;
+                        _audioEngine.configureSfu(
+                          remote,
+                          cur.port,
+                          cur.roomId,
+                          _audioEngine.userId,
+                        );
+                      }
+                    }
                   }
-                  _audioEngine.configureSfu('127.0.0.1', cur.port, cur.roomId, _audioEngine.userId);
                 } else {
-                  if (_audioEngine.isSfuServerRunning) {
-                    _audioEngine.stopHostSfu();
+                  if (mounted) {
+                    setState(() {
+                      _rooms.clear();
+                      _selectedRoomIndex = -1;
+                    });
+                    if (_audioEngine.isSfuServerRunning) {
+                      _audioEngine.stopHostSfu();
+                    }
                   }
-                  final remote = cur.effectivePublicIp;
-                  _audioEngine.configureSfu(remote, cur.port, cur.roomId, _audioEngine.userId);
                 }
-              }
-            }
-          } else {
-            _seedDefaultRoom();
-          }
-        }, onError: (e) {
-          debugPrint('[Firestore jam_rooms error] $e');
-        });
+              },
+              onError: (e) {
+                debugPrint('[Firestore jam_rooms error] $e');
+              },
+            );
       }
     } catch (e) {
       debugPrint('[Rooms listen init error] $e');
@@ -202,20 +232,25 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
         final ips = await _audioEngine.detectHostIps();
         final upnp = UpnpService();
         await upnp.openPort(port: 9999);
-        await FirebaseFirestore.instance.collection('jam_rooms').doc('default-room-1').set({
-          'name': '우리들만의 합주실',
-          'roomId': 1,
-          'iconCode': Icons.music_note.codePoint,
-          'description': '메인 밴드 정기 합주 공간 (UPnP 자동 개방)',
-          'hostUid': user?.uid ?? '',
-          'hostName': _currentUserName,
-          'hostPublicIp': upnp.publicIp,
-          'isUpnpActive': upnp.isPortMapped,
-          'hostTailscaleIp': ips['tailscale'] ?? '',
-          'hostLanIp': upnp.localLanIp.isNotEmpty ? upnp.localLanIp : (ips['lan'] ?? ''),
-          'port': 9999,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        await FirebaseFirestore.instance
+            .collection('jam_rooms')
+            .doc('default-room-1')
+            .set({
+              'name': '합주실',
+              'roomId': 1,
+              'iconCode': Icons.music_note.codePoint,
+              'description': '합주 공간 (UPnP 자동 개방)',
+              'hostUid': user?.uid ?? '',
+              'hostName': _currentUserName,
+              'hostPublicIp': upnp.publicIp,
+              'isUpnpActive': upnp.isPortMapped,
+              'hostTailscaleIp': ips['tailscale'] ?? '',
+              'hostLanIp': upnp.localLanIp.isNotEmpty
+                  ? upnp.localLanIp
+                  : (ips['lan'] ?? ''),
+              'port': 9999,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
       }
     } catch (e) {
       debugPrint('[Seed default room note] $e');
@@ -707,7 +742,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       } else if (room.hostLanIp.isNotEmpty) {
         targetIp = room.hostLanIp;
       } else {
-        targetIp = room.remoteIp.isNotEmpty ? room.remoteIp : _audioEngine.sfuIp;
+        targetIp = room.remoteIp.isNotEmpty
+            ? room.remoteIp
+            : _audioEngine.sfuIp;
       }
 
       _audioEngine.configureSfu(
@@ -861,7 +898,8 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                   fontSize: 13,
                                 ),
                                 decoration: const InputDecoration(
-                                  labelText: '접속할 SFU 서버 IP (방장의 공인 IP 또는 로컬 IP)',
+                                  labelText:
+                                      '접속할 SFU 서버 IP (방장의 공인 IP 또는 로컬 IP)',
                                   hintText: '112.76.x.x 또는 192.168.0.x',
                                   border: OutlineInputBorder(),
                                   isDense: true,
@@ -1019,26 +1057,31 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       await upnp.openPort(port: _audioEngine.sfuPort);
                     }
                     final publicIp = upnp.publicIp;
-                    final lan = upnp.localLanIp.isNotEmpty ? upnp.localLanIp : (ips['lan'] ?? '');
+                    final lan = upnp.localLanIp.isNotEmpty
+                        ? upnp.localLanIp
+                        : (ips['lan'] ?? '');
                     final tailscale = ips['tailscale'] ?? '';
 
-                    String newDocId = DateTime.now().millisecondsSinceEpoch.toString();
+                    String newDocId = DateTime.now().millisecondsSinceEpoch
+                        .toString();
                     if (Firebase.apps.isNotEmpty) {
                       try {
-                        final docRef = await FirebaseFirestore.instance.collection('jam_rooms').add({
-                          'name': name,
-                          'roomId': roomId,
-                          'iconCode': selectedIcon.codePoint,
-                          'description': descController.text.trim(),
-                          'hostUid': hostUid,
-                          'hostName': hostName,
-                          'hostPublicIp': publicIp,
-                          'isUpnpActive': upnp.isPortMapped,
-                          'hostTailscaleIp': tailscale,
-                          'hostLanIp': lan,
-                          'port': _audioEngine.sfuPort,
-                          'createdAt': FieldValue.serverTimestamp(),
-                        });
+                        final docRef = await FirebaseFirestore.instance
+                            .collection('jam_rooms')
+                            .add({
+                              'name': name,
+                              'roomId': roomId,
+                              'iconCode': selectedIcon.codePoint,
+                              'description': descController.text.trim(),
+                              'hostUid': hostUid,
+                              'hostName': hostName,
+                              'hostPublicIp': publicIp,
+                              'isUpnpActive': upnp.isPortMapped,
+                              'hostTailscaleIp': tailscale,
+                              'hostLanIp': lan,
+                              'port': _audioEngine.sfuPort,
+                              'createdAt': FieldValue.serverTimestamp(),
+                            });
                         newDocId = docRef.id;
                       } catch (e) {
                         debugPrint('[Firestore add room error] $e');
@@ -1091,16 +1134,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   }
 
   void _deleteCurrentRoom() {
-    if (_rooms.length <= 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('최소 1개의 합주실은 유지되어야 합니다.'),
-          backgroundColor: Color(0xFFF23F43),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
+    if (_rooms.isEmpty) return;
     _deleteRoom(_currentRoom);
   }
 
@@ -1124,7 +1158,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+              child: const Text(
+                '취소',
+                style: TextStyle(color: Color(0xFF949BA4)),
+              ),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
@@ -1133,8 +1170,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
               onPressed: () async {
                 setState(() {
                   _rooms.removeWhere((r) => r.id == room.id);
-                  if (_selectedRoomIndex >= _rooms.length) {
-                    _selectedRoomIndex = _rooms.isEmpty ? -1 : 0;
+                  if (_rooms.isEmpty) {
+                    _selectedRoomIndex = -1;
+                  } else if (_selectedRoomIndex >= _rooms.length) {
+                    _selectedRoomIndex = 0;
                   }
                 });
                 if (Firebase.apps.isNotEmpty) {
@@ -1199,14 +1238,20 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2B2D31),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           title: Row(
             children: const [
               Icon(Icons.badge, color: Color(0xFF5865F2)),
               SizedBox(width: 8),
               Text(
                 '닉네임(활동명) 변경',
-                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -1224,15 +1269,22 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+              child: const Text(
+                '취소',
+                style: TextStyle(color: Color(0xFF949BA4)),
+              ),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5865F2),
+              ),
               onPressed: () async {
                 final newName = controller.text.trim();
                 if (newName.isNotEmpty) {
                   try {
-                    await FirebaseAuth.instance.currentUser?.updateDisplayName(newName);
+                    await FirebaseAuth.instance.currentUser?.updateDisplayName(
+                      newName,
+                    );
                     if (mounted) {
                       setState(() {});
                       ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -1422,7 +1474,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_selectedRoomIndex == -1) ...[
+                    if (_selectedRoomIndex == -1 || _rooms.isEmpty) ...[
                       // 세션 로비 헤더
                       Container(
                         height: 48,
@@ -1683,7 +1735,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           children: [
                             // 로비로 돌아가기 버튼
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 4,
+                              ),
                               child: InkWell(
                                 onTap: () {
                                   setState(() {
@@ -1692,15 +1747,24 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                 },
                                 borderRadius: BorderRadius.circular(6),
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 8,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF1E1F22),
                                     borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(color: const Color(0xFF383A40)),
+                                    border: Border.all(
+                                      color: const Color(0xFF383A40),
+                                    ),
                                   ),
                                   child: Row(
                                     children: const [
-                                      Icon(Icons.arrow_back, color: Color(0xFF5865F2), size: 16),
+                                      Icon(
+                                        Icons.arrow_back,
+                                        color: Color(0xFF5865F2),
+                                        size: 16,
+                                      ),
                                       SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
@@ -1786,7 +1850,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                 onTap: _openEditNicknameDialog,
                                 borderRadius: BorderRadius.circular(6),
                                 child: Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 2.0,
+                                    horizontal: 2.0,
+                                  ),
                                   child: Row(
                                     children: [
                                       Stack(
@@ -1794,10 +1861,13 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                         children: [
                                           CircleAvatar(
                                             radius: 18,
-                                            backgroundColor: const Color(0xFF5865F2),
+                                            backgroundColor: const Color(
+                                              0xFF5865F2,
+                                            ),
                                             child: Text(
                                               _currentUserName.isNotEmpty
-                                                  ? _currentUserName[0].toUpperCase()
+                                                  ? _currentUserName[0]
+                                                        .toUpperCase()
                                                   : '합',
                                               style: const TextStyle(
                                                 fontSize: 12,
@@ -1826,7 +1896,8 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                       Expanded(
                                         child: Column(
                                           mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
                                             Row(
                                               children: [
@@ -1834,11 +1905,13 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                                   child: Text(
                                                     '$_currentUserName (나)',
                                                     style: const TextStyle(
-                                                      fontWeight: FontWeight.bold,
+                                                      fontWeight:
+                                                          FontWeight.bold,
                                                       fontSize: 13,
                                                       color: Colors.white,
                                                     ),
-                                                    overflow: TextOverflow.ellipsis,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
                                                   ),
                                                 ),
                                                 const SizedBox(width: 4),
@@ -1916,7 +1989,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   }
 
   Widget _buildMainContent() {
-    if (_selectedRoomIndex == -1) {
+    if (_selectedRoomIndex == -1 || _rooms.isEmpty) {
       return _buildLobbySessionHub();
     }
 
@@ -1936,10 +2009,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           onOpenSettings: _openAudioSettingsDialog,
         );
       case 1:
-        return ChatView(
-          roomId: _currentRoom.id,
-          roomName: _currentRoom.name,
-        );
+        return ChatView(roomId: _currentRoom.id, roomName: _currentRoom.name);
       case 2:
         return LobbyScreen(
           roomId: _currentRoom.id,
@@ -1983,10 +2053,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     ),
                     Text(
                       '열려있는 방에 원클릭으로 바로 입장하거나, 내가 방장이 되어 합주실을 열어보세요.',
-                      style: TextStyle(
-                        color: Color(0xFF949BA4),
-                        fontSize: 11,
-                      ),
+                      style: TextStyle(color: Color(0xFF949BA4), fontSize: 11),
                     ),
                   ],
                 ),
@@ -2000,7 +2067,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF5865F2),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -2022,7 +2092,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                   const SizedBox(height: 24),
                   Row(
                     children: [
-                      const Icon(Icons.meeting_room, color: Color(0xFFDBDEE1), size: 20),
+                      const Icon(
+                        Icons.meeting_room,
+                        color: Color(0xFFDBDEE1),
+                        size: 20,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         '진행 중인 합주실 세션 (${_rooms.length})',
@@ -2080,7 +2154,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
               color: const Color(0xFF5865F2).withValues(alpha: 0.15),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.wifi_tethering, color: Color(0xFF5865F2), size: 20),
+            child: const Icon(
+              Icons.wifi_tethering,
+              color: Color(0xFF5865F2),
+              size: 20,
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -2102,7 +2180,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       onTap: _openEditNicknameDialog,
                       child: const Text(
                         '[닉네임 변경]',
-                        style: TextStyle(color: Color(0xFF5865F2), fontSize: 12),
+                        style: TextStyle(
+                          color: Color(0xFF5865F2),
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],
@@ -2125,7 +2206,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           const SizedBox(width: 12),
           OutlinedButton.icon(
             icon: const Icon(Icons.tune, size: 14, color: Color(0xFFDBDEE1)),
-            label: const Text('오인페 / SFU 설정', style: TextStyle(color: Color(0xFFDBDEE1), fontSize: 12)),
+            label: const Text(
+              '오인페 / SFU 설정',
+              style: TextStyle(color: Color(0xFFDBDEE1), fontSize: 12),
+            ),
             style: OutlinedButton.styleFrom(
               side: const BorderSide(color: Color(0xFF4E5058)),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -2202,7 +2286,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
             border: Border.all(
               color: isSelected
                   ? const Color(0xFF5865F2)
-                  : (room.isHost ? const Color(0xFFFEE75C).withValues(alpha: 0.5) : const Color(0xFF383A40)),
+                  : (room.isHost
+                        ? const Color(0xFFFEE75C).withValues(alpha: 0.5)
+                        : const Color(0xFF383A40)),
               width: isSelected || room.isHost ? 1.5 : 1,
             ),
             boxShadow: [
@@ -2236,7 +2322,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     ),
                     child: Icon(
                       room.icon,
-                      color: room.isHost ? const Color(0xFFFEE75C) : const Color(0xFF5865F2),
+                      color: room.isHost
+                          ? const Color(0xFFFEE75C)
+                          : const Color(0xFF5865F2),
                       size: 24,
                     ),
                   ),
@@ -2259,7 +2347,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               ),
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: const Color(0xFF1E1F22),
                                 borderRadius: BorderRadius.circular(4),
@@ -2281,7 +2372,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                             Icon(
                               Icons.person,
                               size: 13,
-                              color: room.isHost ? const Color(0xFFFEE75C) : const Color(0xFF5865F2),
+                              color: room.isHost
+                                  ? const Color(0xFFFEE75C)
+                                  : const Color(0xFF5865F2),
                             ),
                             const SizedBox(width: 4),
                             Expanded(
@@ -2290,7 +2383,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                     ? '내가 방장 (로컬 SFU)'
                                     : '방장: ${room.hostName.isNotEmpty ? room.hostName : "알 수 없음"}',
                                 style: TextStyle(
-                                  color: room.isHost ? const Color(0xFFFEE75C) : const Color(0xFF5865F2),
+                                  color: room.isHost
+                                      ? const Color(0xFFFEE75C)
+                                      : const Color(0xFF5865F2),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -2309,7 +2404,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                 const SizedBox(height: 10),
                 Text(
                   room.description,
-                  style: const TextStyle(color: Color(0xFF949BA4), fontSize: 12),
+                  style: const TextStyle(
+                    color: Color(0xFF949BA4),
+                    fontSize: 12,
+                  ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -2318,7 +2416,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
               const SizedBox(height: 14),
 
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E1F22),
                   borderRadius: BorderRadius.circular(8),
@@ -2332,12 +2433,17 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                         Icon(
                           room.isUpnpActive ? Icons.lock_open : Icons.language,
                           size: 14,
-                          color: room.isUpnpActive ? const Color(0xFF57F287) : const Color(0xFF5865F2),
+                          color: room.isUpnpActive
+                              ? const Color(0xFF57F287)
+                              : const Color(0xFF5865F2),
                         ),
                         const SizedBox(width: 6),
                         Text(
                           room.isUpnpActive ? 'UPnP 공인 IP: ' : '공인 IP: ',
-                          style: const TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                          style: const TextStyle(
+                            color: Color(0xFF949BA4),
+                            fontSize: 11,
+                          ),
                         ),
                         Expanded(
                           child: Text(
@@ -2352,15 +2458,23 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.copy, size: 14, color: Color(0xFF949BA4)),
+                          icon: const Icon(
+                            Icons.copy,
+                            size: 14,
+                            color: Color(0xFF949BA4),
+                          ),
                           tooltip: 'IP 복사',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
                           onPressed: () {
-                            Clipboard.setData(ClipboardData(text: '$displayIp:${room.port}'));
+                            Clipboard.setData(
+                              ClipboardData(text: '$displayIp:${room.port}'),
+                            );
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text('IP 주소가 복사되었습니다: $displayIp:${room.port}'),
+                                content: Text(
+                                  'IP 주소가 복사되었습니다: $displayIp:${room.port}',
+                                ),
                                 duration: const Duration(seconds: 1),
                               ),
                             );
@@ -2368,11 +2482,15 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                         ),
                       ],
                     ),
-                    if (room.hostLanIp.isNotEmpty && room.hostLanIp != displayIp) ...[
+                    if (room.hostLanIp.isNotEmpty &&
+                        room.hostLanIp != displayIp) ...[
                       const SizedBox(height: 4),
                       Text(
                         '• 같은 Wi-Fi 로컬 접속: ${room.hostLanIp}:${room.port}',
-                        style: const TextStyle(color: Color(0xFF72767D), fontSize: 10),
+                        style: const TextStyle(
+                          color: Color(0xFF72767D),
+                          fontSize: 10,
+                        ),
                       ),
                     ],
                   ],
@@ -2391,10 +2509,15 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       ),
                       label: Text(
                         room.isHost ? '방장으로 세션 입장' : '바로 입장',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: room.isHost ? const Color(0xFF5865F2) : const Color(0xFF23A55A),
+                        backgroundColor: room.isHost
+                            ? const Color(0xFF5865F2)
+                            : const Color(0xFF23A55A),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
@@ -2406,7 +2529,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                   ),
                   const SizedBox(width: 8),
                   IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Color(0xFFF23F43), size: 18),
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: Color(0xFFF23F43),
+                      size: 18,
+                    ),
                     tooltip: '합주실 삭제 (꾹 눌러서도 삭제 가능)',
                     onPressed: () => _deleteRoom(room),
                   ),
@@ -2446,7 +2573,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
             overflow: TextOverflow.ellipsis,
           ),
           dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 0,
+          ),
           onTap: onTap,
         ),
       ),
@@ -2462,27 +2592,26 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
         child: ListTile(
           leading: Icon(
             room.icon,
-            color: room.isHost ? const Color(0xFFFEE75C) : const Color(0xFF5865F2),
+            color: room.isHost
+                ? const Color(0xFFFEE75C)
+                : const Color(0xFF5865F2),
             size: 18,
           ),
           title: Text(
             room.name,
-            style: const TextStyle(
-              color: Color(0xFFDBDEE1),
-              fontSize: 12,
-            ),
+            style: const TextStyle(color: Color(0xFFDBDEE1), fontSize: 12),
             overflow: TextOverflow.ellipsis,
           ),
           subtitle: Text(
             room.isHost ? '내가 방장' : '방장: ${room.hostName}',
-            style: const TextStyle(
-              color: Color(0xFF72767D),
-              fontSize: 10,
-            ),
+            style: const TextStyle(color: Color(0xFF72767D), fontSize: 10),
             overflow: TextOverflow.ellipsis,
           ),
           dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 0,
+          ),
           onTap: () => _joinRoom(room),
           onLongPress: () => _deleteRoom(room),
         ),

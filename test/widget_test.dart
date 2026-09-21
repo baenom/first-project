@@ -18,7 +18,9 @@ void main() {
     UpnpService().closePort();
   });
 
-  testWidgets('SyncRoomApp boots up with LoginScreen and no overflow', (WidgetTester tester) async {
+  testWidgets('SyncRoomApp boots up with LoginScreen and no overflow', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const SyncRoomApp());
     await tester.pump();
 
@@ -60,7 +62,9 @@ void main() {
     expect(engine.isSfuServerRunning, isFalse);
   });
 
-  testWidgets('MainLobbyScreen opens create room dialog and adds room', (WidgetTester tester) async {
+  testWidgets('MainLobbyScreen opens create room dialog and adds room', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
@@ -69,7 +73,7 @@ void main() {
     await tester.pump();
 
     // Verify initial state
-    expect(find.text('우리들만의 합주실'), findsWidgets);
+    expect(find.text('합주실'), findsWidgets);
 
     // Find the "+" button for '새 합주실 개설'
     final addBtn = find.byTooltip('새 합주실 개설');
@@ -92,7 +96,9 @@ void main() {
     expect(find.text('새 합주실 #2'), findsWidgets);
   });
 
-  testWidgets('MainLobbyScreen logout button shows confirmation dialog', (WidgetTester tester) async {
+  testWidgets('MainLobbyScreen logout button shows confirmation dialog', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
@@ -109,7 +115,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify confirmation dialog
-    expect(find.text('정말 합주실에서 로그아웃하시겠습니까?\n저장된 로그인 세션이 해제됩니다.'), findsOneWidget);
+    expect(
+      find.text('정말 합주실에서 로그아웃하시겠습니까?\n저장된 로그인 세션이 해제됩니다.'),
+      findsOneWidget,
+    );
     expect(find.widgetWithText(TextButton, '취소'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, '로그아웃'), findsOneWidget);
 
@@ -120,26 +129,31 @@ void main() {
     expect(find.text('정말 합주실에서 로그아웃하시겠습니까?\n저장된 로그인 세션이 해제됩니다.'), findsNothing);
   });
 
-  testWidgets('LoginScreen toggles to sign up mode and displays nickname input field', (WidgetTester tester) async {
-    await tester.pumpWidget(const SyncRoomApp());
-    await tester.pump();
+  testWidgets(
+    'LoginScreen toggles to sign up mode and displays nickname input field',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(const SyncRoomApp());
+      await tester.pump();
 
-    // In login mode, nickname field is not present
-    expect(find.text('합주실 닉네임 (활동명)'), findsNothing);
+      // In login mode, nickname field is not present
+      expect(find.text('합주실 닉네임 (활동명)'), findsNothing);
 
-    // Tap toggle to sign up mode ("새 멤버 등록이 필요하신가요? 회원가입")
-    final toggleBtn = find.text('새 멤버 등록이 필요하신가요? 회원가입');
-    expect(toggleBtn, findsOneWidget);
-    await tester.tap(toggleBtn);
-    await tester.pump();
+      // Tap toggle to sign up mode ("새 멤버 등록이 필요하신가요? 회원가입")
+      final toggleBtn = find.text('새 멤버 등록이 필요하신가요? 회원가입');
+      expect(toggleBtn, findsOneWidget);
+      await tester.tap(toggleBtn);
+      await tester.pump();
 
-    // In sign up mode, nickname field is visible
-    expect(find.text('합주 멤버 가입'), findsOneWidget);
-    expect(find.text('합주실 닉네임 (활동명)'), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, '계정 생성 후 입장'), findsOneWidget);
-  });
+      // In sign up mode, nickname field is visible
+      expect(find.text('합주 멤버 가입'), findsOneWidget);
+      expect(find.text('합주실 닉네임 (활동명)'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, '계정 생성 후 입장'), findsOneWidget);
+    },
+  );
 
-  testWidgets('MainLobbyScreen clicking profile opens edit nickname dialog', (WidgetTester tester) async {
+  testWidgets('MainLobbyScreen clicking profile opens edit nickname dialog', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
@@ -165,7 +179,9 @@ void main() {
     expect(find.text('닉네임(활동명) 변경'), findsNothing);
   });
 
-  testWidgets('JamRoomScreen shows host card and toggle when isHost is true', (WidgetTester tester) async {
+  testWidgets('JamRoomScreen shows host card and toggle when isHost is true', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
@@ -196,7 +212,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('JamRoomScreen shows guest card when isHost is false', (WidgetTester tester) async {
+  testWidgets('JamRoomScreen shows guest card when isHost is false', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
@@ -228,38 +246,72 @@ void main() {
     expect(find.text('SFU 서버 정지됨'), findsNothing);
   });
 
-  testWidgets('MainLobbyScreen long press on room card triggers delete dialog', (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
+  testWidgets(
+    'MainLobbyScreen long press on room card triggers delete dialog',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const MaterialApp(home: MainLobbyScreen()));
-    await tester.pump();
+      await tester.pumpWidget(const MaterialApp(home: MainLobbyScreen()));
+      await tester.pump();
 
-    // Navigate to session hub
-    await tester.tap(find.byTooltip('합주 세션 로비 (전체 목록)'));
-    await tester.pumpAndSettle();
+      // Navigate to session hub
+      await tester.tap(find.byTooltip('합주 세션 로비 (전체 목록)'));
+      await tester.pumpAndSettle();
 
-    // Find the room card in the session hub
-    final roomCard = find.text('우리들만의 합주실').first;
-    expect(roomCard, findsOneWidget);
+      // Find the room card in the session hub
+      final roomCard = find.text('합주실').first;
+      expect(roomCard, findsOneWidget);
 
-    // Long press on the room card
-    await tester.longPress(roomCard);
-    await tester.pumpAndSettle();
+      // Long press on the room card
+      await tester.longPress(roomCard);
+      await tester.pumpAndSettle();
 
-    // Verify delete confirmation dialog appears
-    expect(find.text('합주실 삭제'), findsOneWidget);
-    expect(find.text('\'우리들만의 합주실\' 합주실을 삭제하시겠습니까?'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, '취소'), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, '삭제'), findsOneWidget);
+      // Verify delete confirmation dialog appears
+      expect(find.text('합주실 삭제'), findsOneWidget);
+      expect(find.text('\'합주실\' 합주실을 삭제하시겠습니까?'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, '취소'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, '삭제'), findsOneWidget);
 
-    // Tap cancel
-    await tester.tap(find.widgetWithText(TextButton, '취소'));
-    await tester.pumpAndSettle();
+      // Tap cancel
+      await tester.tap(find.widgetWithText(TextButton, '취소'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('합주실 삭제'), findsNothing);
-  });
+      expect(find.text('합주실 삭제'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'MainLobbyScreen deleting the last room completely deletes it and shows empty state',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      await tester.pumpWidget(const MaterialApp(home: MainLobbyScreen()));
+      await tester.pump();
+
+      // Navigate to session hub
+      await tester.tap(find.byTooltip('합주 세션 로비 (전체 목록)'));
+      await tester.pumpAndSettle();
+
+      // Find the room card in the session hub
+      final roomCard = find.text('합주실').first;
+      expect(roomCard, findsOneWidget);
+
+      // Long press on the room card
+      await tester.longPress(roomCard);
+      await tester.pumpAndSettle();
+
+      // Tap delete button in dialog
+      await tester.tap(find.widgetWithText(ElevatedButton, '삭제'));
+      await tester.pumpAndSettle();
+
+      // Verify room is deleted and empty state is shown
+      expect(find.text('현재 개설된 합주실이 없습니다'), findsOneWidget);
+      expect(find.text('내가 첫 번째 방장이 되어 합주실을 개설해보세요!'), findsOneWidget);
+      expect(find.text('새 합주실 개설하기 (내가 방장)'), findsOneWidget);
+    },
+  );
 }
-
-
