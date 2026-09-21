@@ -953,8 +953,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         alignment: WrapAlignment.spaceBetween,
         children: [
           // 버퍼 사이즈 선택 칩
-          Row(
-            mainAxisSize: MainAxisSize.min,
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               const Text(
                 '오인페 버퍼:',
@@ -964,11 +966,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 2),
+              _buildBufferChip(32, '32 samples (0.7ms)'),
               _buildBufferChip(64, '64 samples (1.3ms)'),
-              const SizedBox(width: 6),
               _buildBufferChip(128, '128 samples (2.7ms)'),
-              const SizedBox(width: 6),
               _buildBufferChip(256, '256 samples (5.3ms)'),
             ],
           ),

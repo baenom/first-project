@@ -81,7 +81,11 @@ namespace {
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
-    const size_t MAX_QUEUE_SAMPLES = static_cast<size_t>(48000 * 2 * 0.15); // 최대 150ms 분량만 큐잉 (초저지연 유지)
+    // 초저지연 유지: 최대 2프레임(약 2.7ms~5.3ms) 분량만 큐잉 허용 (대기 지연 원천 차단)
+    inline size_t get_target_queue_limit() {
+        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 2);
+        return (limit < 512) ? 512 : limit;
+    }
 
     uint64_t get_time_us() {
         return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -157,6 +161,13 @@ namespace {
 
             if (g_running.load()) {
                 std::lock_guard<std::mutex> lock(g_jitter_mutex);
+
+                // 지연 누적 방지(Catch-up): 큐에 2프레임 이상 쌓여있다면 오래된 샘플을 버리고 최신 실시간 오디오 위치로 강제 이동
+                size_t max_allowed_ahead = static_cast<size_t>(total_samples * 2);
+                while (g_playback_queue.size() > max_allowed_ahead) {
+                    g_playback_queue.pop_front();
+                }
+
                 size_t available = g_playback_queue.size();
                 size_t to_read = std::min(static_cast<size_t>(total_samples), available);
 
@@ -238,8 +249,9 @@ void network_receive_loop() {
                                 g_playback_queue.push_back(static_cast<int16_t>(val));
                             }
 
-                            // 큐가 너무 커지면 지연시간 최소화를 위해 오래된 샘플 드롭
-                            while (g_playback_queue.size() > MAX_QUEUE_SAMPLES) {
+                            // 초저지연 유지: 큐가 목표 한도를 초과하면 오래된 샘플을 즉시 버려서 실시간 유지
+                            size_t max_queue = get_target_queue_limit();
+                            while (g_playback_queue.size() > max_queue) {
                                 g_playback_queue.pop_front();
                             }
                         }
@@ -272,6 +284,7 @@ extern "C" {
         std::cout << "[AudioCore] Initializing Audio Engine. SampleRate: " 
                   << sample_rate << ", BufferSize: " << buffer_size << " samples" << std::endl;
         
+        bool params_changed = (g_sample_rate != sample_rate || g_buffer_size != buffer_size);
         g_sample_rate = sample_rate;
         g_buffer_size = buffer_size;
         g_initialized = true;
@@ -281,7 +294,13 @@ extern "C" {
         WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif
 
-        // miniaudio 듀플렉스 디바이스 설정
+        // 만약 이미 디바이스가 초기화되었고 버퍼 크기 등이 바뀌었다면 재초기화
+        if (g_ma_device_initialized.load() && params_changed) {
+            ma_device_uninit(&g_ma_device);
+            g_ma_device_initialized.store(false);
+        }
+
+        // miniaudio 듀플렉스 디바이스 설정 (최소 더블 버퍼링: periods = 2)
         if (!g_ma_device_initialized.load()) {
             ma_device_config config = ma_device_config_init(ma_device_type_duplex);
             config.capture.format = ma_format_s16;
@@ -290,13 +309,18 @@ extern "C" {
             config.playback.channels = 2;
             config.sampleRate = g_sample_rate;
             config.periodSizeInFrames = g_buffer_size;
+            config.periods = 2; // 최소 더블 버퍼링으로 하드웨어 대기 지연 원천 차단
             config.dataCallback = audio_data_callback;
             config.pUserData = nullptr;
             config.performanceProfile = ma_performance_profile_low_latency;
 
             if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
                 g_ma_device_initialized.store(true);
-                std::cout << "[AudioCore] Hardware audio duplex device successfully initialized via miniaudio." << std::endl;
+                if (g_running.load()) {
+                    ma_device_start(&g_ma_device);
+                }
+                std::cout << "[AudioCore] Hardware audio duplex device successfully initialized via miniaudio (Buffer: " 
+                          << g_buffer_size << ", Periods: 2)." << std::endl;
             } else {
                 std::cerr << "[AudioCore Warning] Failed to initialize hardware audio device." << std::endl;
             }
@@ -325,12 +349,28 @@ extern "C" {
     EXPORT void start_audio_stream() {
         if (g_running.load()) return;
 
+        // 큐 초기화 (이전 세션 잔여 데이터 제거)
+        {
+            std::lock_guard<std::mutex> lock(g_jitter_mutex);
+            g_playback_queue.clear();
+        }
+
         // UDP 소켓 개설
         g_sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (g_sockfd == INVALID_SOCKET) {
             std::cerr << "[AudioCore Error] Failed to create UDP socket" << std::endl;
             return;
         }
+
+        // 저지연 소켓 버퍼 크기 설정 (64KB - 과도한 OS 버퍼링 방지)
+        int buf_size = 65536;
+        setsockopt(g_sockfd, SOL_SOCKET, SO_RCVBUF, (const char*)&buf_size, sizeof(buf_size));
+        setsockopt(g_sockfd, SOL_SOCKET, SO_SNDBUF, (const char*)&buf_size, sizeof(buf_size));
+
+#if defined(IP_TOS)
+        int tos = 0x10; // IPTOS_LOWDELAY
+        setsockopt(g_sockfd, IPPROTO_IP, IP_TOS, (const char*)&tos, sizeof(tos));
+#endif
 
         // 빠른 타임아웃
 #ifdef _WIN32
