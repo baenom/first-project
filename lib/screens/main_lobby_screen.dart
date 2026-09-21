@@ -13,6 +13,8 @@ class JamRoom {
   final int roomId;
   final IconData icon;
   final String description;
+  final bool isHost;
+  final String remoteIp;
 
   JamRoom({
     required this.id,
@@ -20,6 +22,8 @@ class JamRoom {
     required this.roomId,
     this.icon = Icons.music_note,
     this.description = '',
+    this.isHost = true,
+    this.remoteIp = '127.0.0.1',
   });
 }
 
@@ -41,7 +45,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       name: '우리들만의 합주실',
       roomId: 1,
       icon: Icons.music_note,
-      description: '메인 밴드 정기 합주 공간',
+      description: '메인 밴드 정기 합주 공간 (로컬 호스트)',
+      isHost: true,
+      remoteIp: '127.0.0.1',
     ),
   ];
 
@@ -55,6 +61,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     super.initState();
     // 48kHz, 버퍼 128 (약 2.67ms) 기본 초기화
     _audioEngine.initialize(48000, 128);
+    // 기본 첫 방이 호스트 모드이면 SFU 중계 서버 자동 가동
+    if (_currentRoom.isHost) {
+      _audioEngine.startHostSfu(port: 9999);
+    }
   }
 
   void _toggleJamming() {
@@ -65,12 +75,25 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     }
   }
 
+  @override
+  void dispose() {
+    _audioEngine.stop();
+    _audioEngine.stopHostSfu();
+    super.dispose();
+  }
+
   void _openAudioSettingsDialog() {
-    final ipController = TextEditingController(text: _audioEngine.sfuIp);
+    bool isHostMode = _currentRoom.isHost || _audioEngine.isSfuServerRunning;
+    final ipController = TextEditingController(text: isHostMode ? '127.0.0.1' : _audioEngine.sfuIp);
     final portController = TextEditingController(text: _audioEngine.sfuPort.toString());
     final roomController = TextEditingController(text: _audioEngine.roomId.toString());
     final userController = TextEditingController(text: _audioEngine.userId.toString());
     int tempBuffer = _audioEngine.bufferSize;
+    Map<String, String> localIps = {'tailscale': '', 'lan': '', 'loopback': '127.0.0.1'};
+
+    _audioEngine.detectHostIps().then((ips) {
+      localIps = ips;
+    });
 
     showDialog(
       context: context,
@@ -84,53 +107,185 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                 children: const [
                   Icon(Icons.tune, color: Color(0xFF5865F2)),
                   SizedBox(width: 8),
-                  Text('오인페 및 홈 NAS SFU 설정', style: TextStyle(color: Colors.white, fontSize: 18)),
+                  Text('오인페 및 SFU 서버 설정', style: TextStyle(color: Colors.white, fontSize: 18)),
                 ],
               ),
               content: SingleChildScrollView(
                 child: SizedBox(
-                  width: 420,
+                  width: 440,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // 모드 선택 (방장 모드 vs 게스트 모드)
                       const Text(
-                        '중계 서버 (홈 NAS)',
+                        'SFU 접속 방식 선택',
                         style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
                       ),
                       const SizedBox(height: 8),
                       Row(
                         children: [
                           Expanded(
-                            flex: 3,
-                            child: TextField(
-                              controller: ipController,
-                              style: const TextStyle(color: Colors.white, fontSize: 13),
-                              decoration: const InputDecoration(
-                                labelText: 'NAS IP / DDNS',
-                                hintText: '192.168.0.50 또는 myjam.synology.me',
-                                border: OutlineInputBorder(),
-                                isDense: true,
+                            child: ChoiceChip(
+                              avatar: const Text('👑', style: TextStyle(fontSize: 12)),
+                              label: const Text('내가 방장 (로컬 SFU)'),
+                              selected: isHostMode,
+                              selectedColor: const Color(0xFF5865F2),
+                              labelStyle: TextStyle(
+                                color: isHostMode ? Colors.white : const Color(0xFFB5BAC1),
+                                fontSize: 12,
+                                fontWeight: isHostMode ? FontWeight.bold : FontWeight.normal,
                               ),
+                              onSelected: (val) {
+                                if (val) {
+                                  setDialogState(() {
+                                    isHostMode = true;
+                                    ipController.text = '127.0.0.1';
+                                  });
+                                }
+                              },
                             ),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
-                            flex: 2,
-                            child: TextField(
-                              controller: portController,
-                              keyboardType: TextInputType.number,
-                              style: const TextStyle(color: Colors.white, fontSize: 13),
-                              decoration: const InputDecoration(
-                                labelText: 'UDP 포트',
-                                hintText: '9999',
-                                border: OutlineInputBorder(),
-                                isDense: true,
+                            child: ChoiceChip(
+                              avatar: const Icon(Icons.headphones, size: 14, color: Color(0xFFDBDEE1)),
+                              label: const Text('게스트 (원격 SFU)'),
+                              selected: !isHostMode,
+                              selectedColor: const Color(0xFF5865F2),
+                              labelStyle: TextStyle(
+                                color: !isHostMode ? Colors.white : const Color(0xFFB5BAC1),
+                                fontSize: 12,
+                                fontWeight: !isHostMode ? FontWeight.bold : FontWeight.normal,
                               ),
+                              onSelected: (val) {
+                                if (val) {
+                                  setDialogState(() {
+                                    isHostMode = false;
+                                    if (ipController.text == '127.0.0.1') {
+                                      ipController.text = '';
+                                    }
+                                  });
+                                }
+                              },
                             ),
                           ),
                         ],
                       ),
+                      const SizedBox(height: 14),
+
+                      if (isHostMode) ...[
+                        // 방장 모드 안내 및 서버 상태 패널
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E1F22),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFFEE75C).withValues(alpha: 0.4)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: _audioEngine.isSfuServerRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _audioEngine.isSfuServerRunning
+                                        ? '내장 SFU 중계 서버 실행 중 (피어: ${_audioEngine.sfuServerPeerCount}명)'
+                                        : '내장 SFU 서버 대기/정지 상태',
+                                    style: TextStyle(
+                                      color: _audioEngine.isSfuServerRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  TextButton(
+                                    onPressed: () {
+                                      final port = int.tryParse(portController.text.trim()) ?? 9999;
+                                      if (_audioEngine.isSfuServerRunning) {
+                                        _audioEngine.stopHostSfu();
+                                      } else {
+                                        _audioEngine.startHostSfu(port: port);
+                                      }
+                                      setDialogState(() {});
+                                    },
+                                    child: Text(
+                                      _audioEngine.isSfuServerRunning ? '서버 중지' : '서버 시작',
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFF5865F2)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              if (localIps['tailscale']?.isNotEmpty ?? false)
+                                Text(
+                                  '• Tailscale 초대 IP: ${localIps['tailscale']}:${portController.text.trim()}',
+                                  style: const TextStyle(color: Color(0xFFFEE75C), fontSize: 11),
+                                ),
+                              if (localIps['lan']?.isNotEmpty ?? false)
+                                Text(
+                                  '• 로컬 LAN IP: ${localIps['lan']}:${portController.text.trim()}',
+                                  style: const TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: portController,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          decoration: const InputDecoration(
+                            labelText: 'SFU UDP 포트 (기본 9999)',
+                            hintText: '9999',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                      ] else ...[
+                        // 게스트 모드: IP 직접 입력
+                        Row(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: TextField(
+                                controller: ipController,
+                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                decoration: const InputDecoration(
+                                  labelText: '방장 Tailscale IP 또는 NAS IP',
+                                  hintText: '예: 100.85.x.x 또는 192.168.0.x',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 2,
+                              child: TextField(
+                                controller: portController,
+                                keyboardType: TextInputType.number,
+                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                decoration: const InputDecoration(
+                                  labelText: 'UDP 포트',
+                                  hintText: '9999',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       Row(
                         children: [
@@ -231,15 +386,23 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     final room = int.tryParse(roomController.text.trim()) ?? 1;
                     final user = int.tryParse(userController.text.trim()) ?? 101;
 
-                    _audioEngine.configureSfu(ip, port, room, user);
+                    if (isHostMode) {
+                      _audioEngine.startHostSfu(port: port);
+                      _audioEngine.configureSfu('127.0.0.1', port, room, user);
+                    } else {
+                      _audioEngine.stopHostSfu();
+                      _audioEngine.configureSfu(ip, port, room, user);
+                    }
                     _audioEngine.setBufferSize(tempBuffer);
 
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('오인페 및 SFU 설정이 적용되었습니다.'),
-                        backgroundColor: Color(0xFF23A55A),
-                        duration: Duration(seconds: 2),
+                      SnackBar(
+                        content: Text(isHostMode
+                            ? '방장 모드(내장 SFU 서버)가 활성화되었습니다. (루프백 0ms)'
+                            : '게스트 모드로 SFU 서버 ($ip:$port)에 연결되었습니다.'),
+                        backgroundColor: const Color(0xFF23A55A),
+                        duration: const Duration(seconds: 3),
                       ),
                     );
                   },
@@ -260,12 +423,23 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     });
 
     final room = _rooms[index];
-    _audioEngine.configureSfu(
-      _audioEngine.sfuIp,
-      _audioEngine.sfuPort,
-      room.roomId,
-      _audioEngine.userId,
-    );
+    if (room.isHost) {
+      _audioEngine.startHostSfu(port: _audioEngine.sfuPort);
+      _audioEngine.configureSfu(
+        '127.0.0.1',
+        _audioEngine.sfuPort,
+        room.roomId,
+        _audioEngine.userId,
+      );
+    } else {
+      _audioEngine.stopHostSfu();
+      _audioEngine.configureSfu(
+        room.remoteIp.isNotEmpty ? room.remoteIp : _audioEngine.sfuIp,
+        _audioEngine.sfuPort,
+        room.roomId,
+        _audioEngine.userId,
+      );
+    }
 
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -274,7 +448,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           children: [
             Icon(room.icon, color: Colors.white, size: 18),
             const SizedBox(width: 8),
-            Text('\'${room.name}\' 합주실로 이동했습니다 (방 #${room.roomId})'),
+            Text('\'${room.name}\' 합주실로 이동했습니다 (방 #${room.roomId} ${room.isHost ? '• 내가 방장' : ''})'),
           ],
         ),
         backgroundColor: const Color(0xFF5865F2),
@@ -288,6 +462,8 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     final nameController = TextEditingController(text: '새 합주실 #$nextRoomId');
     final idController = TextEditingController(text: nextRoomId.toString());
     final descController = TextEditingController();
+    final remoteIpController = TextEditingController();
+    bool isHost = true;
     IconData selectedIcon = Icons.music_note;
 
     final availableIcons = [
@@ -323,6 +499,65 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // 방장 호스트 모드 여부 토글
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E1F22),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isHost ? const Color(0xFFFEE75C).withValues(alpha: 0.6) : const Color(0xFF383A40),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Text('👑 ', style: TextStyle(fontSize: 16)),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: const [
+                                      Text(
+                                        '내가 이 방의 SFU 호스트(방장) 되기',
+                                        style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                      ),
+                                      Text(
+                                        '내 컴퓨터에서 SFU 서버를 자동 실행하고 Tailscale로 친구를 초대합니다.',
+                                        style: TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Switch(
+                                  value: isHost,
+                                  activeColor: const Color(0xFF5865F2),
+                                  onChanged: (val) {
+                                    setDialogState(() {
+                                      isHost = val;
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                            if (!isHost) ...[
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: remoteIpController,
+                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                decoration: const InputDecoration(
+                                  labelText: '접속할 SFU 서버 IP (방장의 Tailscale IP)',
+                                  hintText: '100.85.x.x 또는 192.168.0.x',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
                       const Text(
                         '합주실 기본 정보',
                         style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
@@ -351,9 +586,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      const Text(
-                        '* 홈 NAS SFU 서버의 고유 채널 번호로 연결됩니다.',
-                        style: TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                      Text(
+                        isHost ? '* 내 맥북의 내장 SFU 서버에 고유 채널 번호로 개설됩니다.' : '* 홈 NAS/원격 SFU 서버의 방 번호입니다.',
+                        style: const TextStyle(color: Color(0xFF949BA4), fontSize: 11),
                       ),
                       const SizedBox(height: 14),
                       TextField(
@@ -432,6 +667,8 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       roomId: roomId,
                       icon: selectedIcon,
                       description: descController.text.trim(),
+                      isHost: isHost,
+                      remoteIp: isHost ? '127.0.0.1' : remoteIpController.text.trim(),
                     );
 
                     setState(() {
@@ -439,19 +676,32 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       _selectedRoomIndex = _rooms.length - 1;
                     });
 
-                    _audioEngine.configureSfu(
-                      _audioEngine.sfuIp,
-                      _audioEngine.sfuPort,
-                      newRoom.roomId,
-                      _audioEngine.userId,
-                    );
+                    if (isHost) {
+                      _audioEngine.startHostSfu(port: _audioEngine.sfuPort);
+                      _audioEngine.configureSfu(
+                        '127.0.0.1',
+                        _audioEngine.sfuPort,
+                        newRoom.roomId,
+                        _audioEngine.userId,
+                      );
+                    } else {
+                      _audioEngine.stopHostSfu();
+                      _audioEngine.configureSfu(
+                        newRoom.remoteIp.isNotEmpty ? newRoom.remoteIp : _audioEngine.sfuIp,
+                        _audioEngine.sfuPort,
+                        newRoom.roomId,
+                        _audioEngine.userId,
+                      );
+                    }
 
                     Navigator.pop(context);
 
                     ScaffoldMessenger.of(context).hideCurrentSnackBar();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId)'),
+                        content: Text(isHost
+                            ? '\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId • 내 SFU 서버 가동)'
+                            : '\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId)'),
                         backgroundColor: const Color(0xFF23A55A),
                         duration: const Duration(seconds: 3),
                       ),
@@ -887,6 +1137,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       case 0:
         return JamRoomScreen(
           roomName: _currentRoom.name,
+          isHost: _currentRoom.isHost,
           onToggleJam: _toggleJamming,
           isJamming: _audioEngine.isStreaming,
           onOpenSettings: _openAudioSettingsDialog,

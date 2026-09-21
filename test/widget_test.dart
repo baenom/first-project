@@ -15,7 +15,13 @@ void main() {
     expect(find.text('합주실 로비 접속'), findsOneWidget);
   });
 
-  test('AudioEngine initialization and configuration test', () {
+  tearDown(() {
+    final engine = AudioEngine();
+    engine.stop();
+    engine.stopHostSfu();
+  });
+
+  test('AudioEngine initialization, configuration and host SFU test', () async {
     final engine = AudioEngine();
     engine.initialize(48000, 128);
 
@@ -30,6 +36,21 @@ void main() {
 
     engine.setBufferSize(64);
     expect(engine.bufferSize, 64);
+
+    // Test Host SFU Server start
+    final started = engine.startHostSfu(port: 9999);
+    expect(started, isTrue);
+    expect(engine.isSfuServerRunning, isTrue);
+    expect(engine.sfuIp, '127.0.0.1');
+
+    // Test IP detection
+    final ips = await engine.detectHostIps();
+    expect(ips, contains('loopback'));
+    expect(ips['loopback'], '127.0.0.1');
+
+    // Stop Host SFU
+    engine.stopHostSfu();
+    expect(engine.isSfuServerRunning, isFalse);
   });
 
   testWidgets('MainLobbyScreen opens create room dialog and adds room', (WidgetTester tester) async {

@@ -279,4 +279,208 @@ extern "C" {
     EXPORT int is_audio_running() {
         return g_running ? 1 : 0;
     }
+
+    // 내장 SFU 릴레이 서버 상태 및 스레드
+    namespace {
+        std::atomic<bool> g_sfu_server_running{false};
+        SOCKET g_sfu_server_sockfd = INVALID_SOCKET;
+        std::thread g_sfu_server_thread;
+        std::atomic<int> g_sfu_active_peers{0};
+
+        struct EmbeddedPeerInfo {
+            uint16_t user_id;
+            sockaddr_in address;
+            std::chrono::steady_clock::time_point last_seen;
+        };
+
+        void embedded_sfu_loop(int port) {
+            std::cout << "[Embedded SFU] Relay server listening on UDP port " << port << std::endl;
+            std::unordered_map<uint16_t, std::vector<EmbeddedPeerInfo>> rooms;
+            uint8_t recv_buffer[4096];
+            auto last_stats_time = std::chrono::steady_clock::now();
+
+            while (g_sfu_server_running) {
+                sockaddr_in client_addr{};
+                socklen_t addr_len = sizeof(client_addr);
+
+                int bytes_received = recvfrom(
+                    g_sfu_server_sockfd,
+                    (char*)recv_buffer,
+                    sizeof(recv_buffer),
+                    0,
+                    (struct sockaddr*)&client_addr,
+                    &addr_len
+                );
+
+                auto now = std::chrono::steady_clock::now();
+
+                if (bytes_received >= (int)sizeof(AudioPacketHeader)) {
+                    auto* header = reinterpret_cast<AudioPacketHeader*>(recv_buffer);
+                    if (header->magic == SYNC_MAGIC) {
+                        uint16_t room_id = header->room_id;
+                        uint16_t user_id = header->user_id;
+                        auto& peer_list = rooms[room_id];
+
+                        bool found = false;
+                        for (auto& peer : peer_list) {
+                            if (peer.user_id == user_id) {
+                                peer.address = client_addr;
+                                peer.last_seen = now;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found && header->packet_type != PACKET_TYPE_LEAVE) {
+                            peer_list.push_back({user_id, client_addr, now});
+                            char ip_str[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &(client_addr.sin_addr), ip_str, INET_ADDRSTRLEN);
+                            std::cout << "[Embedded SFU Room " << room_id << "] New peer registered: User " << user_id 
+                                      << " (" << ip_str << ":" << ntohs(client_addr.sin_port) << ")" << std::endl;
+                        }
+
+                        if (header->packet_type == PACKET_TYPE_AUDIO) {
+                            for (const auto& peer : peer_list) {
+                                if (peer.user_id != user_id) {
+                                    sendto(
+                                        g_sfu_server_sockfd,
+                                        (const char*)recv_buffer,
+                                        bytes_received,
+                                        0,
+                                        (struct sockaddr*)&peer.address,
+                                        sizeof(peer.address)
+                                    );
+                                }
+                            }
+                        } else if (header->packet_type == PACKET_TYPE_PING) {
+                            header->packet_type = PACKET_TYPE_PONG;
+                            sendto(
+                                g_sfu_server_sockfd,
+                                (const char*)recv_buffer,
+                                sizeof(AudioPacketHeader),
+                                0,
+                                (struct sockaddr*)&client_addr,
+                                sizeof(client_addr)
+                            );
+                        } else if (header->packet_type == PACKET_TYPE_LEAVE) {
+                            for (auto it = peer_list.begin(); it != peer_list.end(); ) {
+                                if (it->user_id == user_id) {
+                                    it = peer_list.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3초마다 타임아웃 세션 정리
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats_time).count() >= 3) {
+                    last_stats_time = now;
+                    int total_active_peers = 0;
+
+                    for (auto it = rooms.begin(); it != rooms.end(); ) {
+                        auto& peer_list = it->second;
+                        for (auto p_it = peer_list.begin(); p_it != peer_list.end(); ) {
+                            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - p_it->last_seen).count();
+                            if (elapsed > 5) {
+                                p_it = peer_list.erase(p_it);
+                            } else {
+                                ++p_it;
+                            }
+                        }
+                        if (peer_list.empty()) {
+                            it = rooms.erase(it);
+                        } else {
+                            total_active_peers += peer_list.size();
+                            ++it;
+                        }
+                    }
+                    g_sfu_active_peers.store(total_active_peers);
+                }
+            }
+            std::cout << "[Embedded SFU] Loop exited." << std::endl;
+        }
+    }
+
+    EXPORT int start_embedded_sfu(int port) {
+        if (g_sfu_server_running.load()) {
+            std::cout << "[Embedded SFU] Server already running on port " << port << std::endl;
+            return 0;
+        }
+
+#ifdef _WIN32
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+
+        g_sfu_server_sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (g_sfu_server_sockfd == INVALID_SOCKET) {
+            std::cerr << "[Embedded SFU Error] Failed to create socket" << std::endl;
+            return -1;
+        }
+
+        int opt = 1;
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+#ifndef _WIN32
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_REUSEPORT, (const char*)&opt, sizeof(opt));
+#endif
+
+        int buf_size = 1024 * 1024;
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVBUF, (const char*)&buf_size, sizeof(buf_size));
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_SNDBUF, (const char*)&buf_size, sizeof(buf_size));
+
+#ifdef _WIN32
+        DWORD timeout_ms = 50;
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
+#else
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 50000;
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#endif
+
+        sockaddr_in server_addr{};
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_addr.s_addr = INADDR_ANY;
+        server_addr.sin_port = htons(port);
+
+        if (bind(g_sfu_server_sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
+            std::cerr << "[Embedded SFU Error] Failed to bind to port " << port << std::endl;
+            closesocket(g_sfu_server_sockfd);
+            g_sfu_server_sockfd = INVALID_SOCKET;
+            return -1;
+        }
+
+        g_sfu_server_running = true;
+        g_sfu_server_thread = std::thread(embedded_sfu_loop, port);
+        std::cout << "[Embedded SFU] Server started successfully on port " << port << std::endl;
+        return 0;
+    }
+
+    EXPORT void stop_embedded_sfu() {
+        if (!g_sfu_server_running.load()) return;
+
+        std::cout << "[Embedded SFU] Stopping server..." << std::endl;
+        g_sfu_server_running = false;
+
+        if (g_sfu_server_sockfd != INVALID_SOCKET) {
+            closesocket(g_sfu_server_sockfd);
+            g_sfu_server_sockfd = INVALID_SOCKET;
+        }
+
+        if (g_sfu_server_thread.joinable()) {
+            g_sfu_server_thread.join();
+        }
+
+        g_sfu_active_peers.store(0);
+        std::cout << "[Embedded SFU] Server stopped." << std::endl;
+    }
+
+    EXPORT int is_sfu_running() {
+        return g_sfu_server_running.load() ? 1 : 0;
+    }
+
+    EXPORT int get_sfu_peer_count() {
+        return g_sfu_active_peers.load();
+    }
 }

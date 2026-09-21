@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/audio_engine.dart';
 
 class PeerState {
@@ -25,8 +26,8 @@ class JamRoomScreen extends StatefulWidget {
   final VoidCallback onToggleJam;
   final bool isJamming;
   final VoidCallback onOpenSettings;
-
   final String? roomName;
+  final bool isHost;
 
   const JamRoomScreen({
     super.key,
@@ -34,6 +35,7 @@ class JamRoomScreen extends StatefulWidget {
     required this.isJamming,
     required this.onOpenSettings,
     this.roomName,
+    this.isHost = true,
   });
 
   @override
@@ -42,8 +44,8 @@ class JamRoomScreen extends StatefulWidget {
 
 class _JamRoomScreenState extends State<JamRoomScreen> {
   final AudioEngine _audioEngine = AudioEngine();
-
   late final List<PeerState> _peers;
+  Map<String, String> _hostIps = {'tailscale': '', 'lan': '', 'loopback': '127.0.0.1'};
 
   @override
   void initState() {
@@ -56,6 +58,16 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         audioInterface: 'ASIO / CoreAudio 연결됨',
       ),
     ];
+    _loadHostIps();
+  }
+
+  Future<void> _loadHostIps() async {
+    final ips = await _audioEngine.detectHostIps();
+    if (mounted) {
+      setState(() {
+        _hostIps = ips;
+      });
+    }
   }
 
   @override
@@ -63,6 +75,8 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     return ListenableBuilder(
       listenable: _audioEngine,
       builder: (context, _) {
+        final showHostCard = widget.isHost || _audioEngine.isSfuServerRunning;
+
         return SingleChildScrollView(
           padding: const EdgeInsets.all(20.0),
           child: Column(
@@ -70,6 +84,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             children: [
               // 1. 상단 세션 헤더 & 제어 바
               _buildTopSessionBar(),
+              if (showHostCard) ...[
+                const SizedBox(height: 14),
+                _buildHostControlCard(),
+              ],
               const SizedBox(height: 16),
 
               // 2. 실시간 상태 및 버퍼/레이턴시 모니터 바
@@ -82,6 +100,234 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHostControlCard() {
+    final tailscale = _hostIps['tailscale'] ?? '';
+    final lan = _hostIps['lan'] ?? '';
+    final port = _audioEngine.sfuServerPort;
+    final isRunning = _audioEngine.isSfuServerRunning;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1F22),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isRunning ? const Color(0xFFFEE75C).withValues(alpha: 0.5) : const Color(0xFF4E5058),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                spacing: 10,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE75C).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('👑 ', style: TextStyle(fontSize: 13)),
+                        Text(
+                          '내가 이 방의 SFU 호스트 (방장)',
+                          style: TextStyle(
+                            color: Color(0xFFFEE75C),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isRunning
+                          ? const Color(0xFF23A55A).withValues(alpha: 0.2)
+                          : const Color(0xFFDA373C).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isRunning ? 'SFU 중계 서버 가동 중 (UDP $port)' : 'SFU 서버 정지됨',
+                          style: TextStyle(
+                            color: isRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isRunning) ...[
+                    Text(
+                      '👥 접속 중인 피어: ${_audioEngine.sfuServerPeerCount}명',
+                      style: const TextStyle(color: Color(0xFF949BA4), fontSize: 12),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF5865F2),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                    onPressed: _loadHostIps,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('IP 새로고침', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              // Tailscale IP Chip
+              _buildIpChip(
+                label: 'Tailscale 원격 접속 IP (친구 전달용)',
+                ip: tailscale.isNotEmpty ? '$tailscale:$port' : 'Tailscale 미감지 (앱 켜기)',
+                icon: Icons.vpn_lock,
+                isPrimary: true,
+                copyValue: tailscale.isNotEmpty ? tailscale : '',
+              ),
+              // LAN IP Chip
+              _buildIpChip(
+                label: '로컬 LAN IP (같은 Wi-Fi 공유기용)',
+                ip: lan.isNotEmpty ? '$lan:$port' : '로컬 IP 확인 불가',
+                icon: Icons.wifi,
+                isPrimary: false,
+                copyValue: lan.isNotEmpty ? lan : '',
+              ),
+              // Full invite copy button
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5865F2),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () {
+                  final bestIp = tailscale.isNotEmpty ? tailscale : (lan.isNotEmpty ? lan : '127.0.0.1');
+                  final inviteText = '🎵 [${widget.roomName ?? '합주실'}] 온라인 합주 초대 안내\n'
+                      '• 방 번호: #${_audioEngine.roomId}\n'
+                      '• SFU 서버 IP: $bestIp\n'
+                      '• UDP 포트: $port\n'
+                      '※ Tailscale 실행 후 앱 상단 설정(오인페/NAS)에서 위 정보를 입력하고 참여하세요!';
+                  Clipboard.setData(ClipboardData(text: inviteText));
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('📋 친구 초대 안내문이 복사되었습니다. (카톡/디스코드에 붙여넣기)'),
+                      backgroundColor: Color(0xFF23A55A),
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('📋 전체 초대 정보 복사', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIpChip({
+    required String label,
+    required String ip,
+    required IconData icon,
+    required bool isPrimary,
+    required String copyValue,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2B2D31),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isPrimary ? const Color(0xFF5865F2).withValues(alpha: 0.6) : const Color(0xFF383A40),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: isPrimary ? const Color(0xFF5865F2) : const Color(0xFF949BA4)),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(color: Color(0xFF949BA4), fontSize: 10),
+              ),
+              Text(
+                ip,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: isPrimary ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+          if (copyValue.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            InkWell(
+              borderRadius: BorderRadius.circular(4),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: copyValue));
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('\'$copyValue\' IP가 복사되었습니다.'),
+                    backgroundColor: const Color(0xFF23A55A),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: const Padding(
+                padding: EdgeInsets.all(4.0),
+                child: Icon(Icons.content_copy, size: 14, color: Color(0xFFDBDEE1)),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

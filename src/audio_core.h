@@ -31,6 +31,18 @@ extern "C" {
 
     // 현재 오디오 스트림 실행 여부 확인 (1: 실행중, 0: 중지됨)
     EXPORT int is_audio_running();
+
+    // 내장 SFU 릴레이 서버 시작 (성공시 0 반환, 실패시 -1)
+    EXPORT int start_embedded_sfu(int port);
+
+    // 내장 SFU 릴레이 서버 중지
+    EXPORT void stop_embedded_sfu();
+
+    // 내장 SFU 서버 가동 상태 확인 (1: 실행중, 0: 중지됨)
+    EXPORT int is_sfu_running();
+
+    // 현재 SFU 중계 서버에 연결된 활성 피어 수 조회
+    EXPORT int get_sfu_peer_count();
 }
 
 #endif // AUDIO_CORE_H
