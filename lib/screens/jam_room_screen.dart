@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/audio_engine.dart';
 
 class PeerState {
@@ -45,7 +47,26 @@ class JamRoomScreen extends StatefulWidget {
 class _JamRoomScreenState extends State<JamRoomScreen> {
   final AudioEngine _audioEngine = AudioEngine();
   late final List<PeerState> _peers;
-  Map<String, String> _hostIps = {'tailscale': '', 'lan': '', 'loopback': '127.0.0.1'};
+  Map<String, String> _hostIps = {
+    'tailscale': '',
+    'lan': '',
+    'loopback': '127.0.0.1',
+  };
+
+  String _getMyName() {
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user?.displayName != null && user!.displayName!.trim().isNotEmpty) {
+          return user.displayName!;
+        }
+        if (user?.email != null && user!.email!.trim().isNotEmpty) {
+          return user.email!.split('@').first;
+        }
+      }
+    } catch (_) {}
+    return '합주자';
+  }
 
   @override
   void initState() {
@@ -53,7 +74,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     _peers = [
       PeerState(
         userId: _audioEngine.userId,
-        name: '의진 (나)',
+        name: '${_getMyName()} (나)',
         instrument: '내 악기 / 오디오 인터페이스',
         audioInterface: 'ASIO / CoreAudio 연결됨',
       ),
@@ -115,7 +136,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         color: const Color(0xFF1E1F22),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isRunning ? const Color(0xFFFEE75C).withValues(alpha: 0.5) : const Color(0xFF4E5058),
+          color: isRunning
+              ? const Color(0xFFFEE75C).withValues(alpha: 0.5)
+              : const Color(0xFF4E5058),
           width: 1.5,
         ),
       ),
@@ -134,7 +157,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFEE75C).withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(6),
@@ -142,7 +168,6 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('👑 ', style: TextStyle(fontSize: 13)),
                         Text(
                           '내가 이 방의 SFU 호스트 (방장)',
                           style: TextStyle(
@@ -155,7 +180,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: isRunning
                           ? const Color(0xFF23A55A).withValues(alpha: 0.2)
@@ -170,14 +198,20 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                           height: 8,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: isRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                            color: isRunning
+                                ? const Color(0xFF23A55A)
+                                : const Color(0xFFDA373C),
                           ),
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          isRunning ? 'SFU 중계 서버 가동 중 (UDP $port)' : 'SFU 서버 정지됨',
+                          isRunning
+                              ? 'SFU 중계 서버 가동 중 (UDP $port)'
+                              : 'SFU 서버 정지됨',
                           style: TextStyle(
-                            color: isRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                            color: isRunning
+                                ? const Color(0xFF23A55A)
+                                : const Color(0xFFDA373C),
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
@@ -192,19 +226,28 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 children: [
                   if (isRunning) ...[
                     Text(
-                      '👥 접속 중인 피어: ${_audioEngine.sfuServerPeerCount}명',
-                      style: const TextStyle(color: Color(0xFF949BA4), fontSize: 12),
+                      '접속 중인 피어: ${_audioEngine.sfuServerPeerCount}명',
+                      style: const TextStyle(
+                        color: Color(0xFF949BA4),
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(width: 10),
                   ],
                   TextButton.icon(
                     style: TextButton.styleFrom(
                       foregroundColor: const Color(0xFF5865F2),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
                     ),
                     onPressed: _loadHostIps,
                     icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('IP 새로고침', style: TextStyle(fontSize: 12)),
+                    label: const Text(
+                      'IP 새로고침',
+                      style: TextStyle(fontSize: 12),
+                    ),
                   ),
                 ],
               ),
@@ -219,7 +262,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
               // Tailscale IP Chip
               _buildIpChip(
                 label: 'Tailscale 원격 접속 IP (친구 전달용)',
-                ip: tailscale.isNotEmpty ? '$tailscale:$port' : 'Tailscale 미감지 (앱 켜기)',
+                ip: tailscale.isNotEmpty
+                    ? '$tailscale:$port'
+                    : 'Tailscale 미감지 (앱 켜기)',
                 icon: Icons.vpn_lock,
                 isPrimary: true,
                 copyValue: tailscale.isNotEmpty ? tailscale : '',
@@ -237,12 +282,20 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF5865F2),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 onPressed: () {
-                  final bestIp = tailscale.isNotEmpty ? tailscale : (lan.isNotEmpty ? lan : '127.0.0.1');
-                  final inviteText = '🎵 [${widget.roomName ?? '합주실'}] 온라인 합주 초대 안내\n'
+                  final bestIp = tailscale.isNotEmpty
+                      ? tailscale
+                      : (lan.isNotEmpty ? lan : '127.0.0.1');
+                  final inviteText =
+                      '🎵 [${widget.roomName ?? '합주실'}] 온라인 합주 초대 안내\n'
                       '• 방 번호: #${_audioEngine.roomId}\n'
                       '• SFU 서버 IP: $bestIp\n'
                       '• UDP 포트: $port\n'
@@ -251,14 +304,17 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   ScaffoldMessenger.of(context).hideCurrentSnackBar();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('📋 친구 초대 안내문이 복사되었습니다. (카톡/디스코드에 붙여넣기)'),
+                      content: Text('친구 초대 안내문이 복사되었습니다. (카톡/디스코드에 붙여넣기)'),
                       backgroundColor: Color(0xFF23A55A),
                       duration: Duration(seconds: 3),
                     ),
                   );
                 },
                 icon: const Icon(Icons.copy, size: 16),
-                label: const Text('📋 전체 초대 정보 복사', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                label: const Text(
+                  '전체 초대 정보 복사',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                ),
               ),
             ],
           ),
@@ -280,13 +336,21 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         color: const Color(0xFF2B2D31),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isPrimary ? const Color(0xFF5865F2).withValues(alpha: 0.6) : const Color(0xFF383A40),
+          color: isPrimary
+              ? const Color(0xFF5865F2).withValues(alpha: 0.6)
+              : const Color(0xFF383A40),
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: isPrimary ? const Color(0xFF5865F2) : const Color(0xFF949BA4)),
+          Icon(
+            icon,
+            size: 16,
+            color: isPrimary
+                ? const Color(0xFF5865F2)
+                : const Color(0xFF949BA4),
+          ),
           const SizedBox(width: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -322,7 +386,11 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
               },
               child: const Padding(
                 padding: EdgeInsets.all(4.0),
-                child: Icon(Icons.content_copy, size: 14, color: Color(0xFFDBDEE1)),
+                child: Icon(
+                  Icons.content_copy,
+                  size: 14,
+                  color: Color(0xFFDBDEE1),
+                ),
               ),
             ),
           ],
@@ -358,7 +426,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 ),
                 child: Icon(
                   Icons.album,
-                  color: widget.isJamming ? const Color(0xFF23A55A) : const Color(0xFF949BA4),
+                  color: widget.isJamming
+                      ? const Color(0xFF23A55A)
+                      : const Color(0xFF949BA4),
                   size: 24,
                 ),
               ),
@@ -378,7 +448,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                       ),
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: widget.isJamming
                               ? const Color(0xFF23A55A)
@@ -399,7 +472,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   const SizedBox(height: 4),
                   Text(
                     'SFU NAS: ${_audioEngine.sfuIp}:${_audioEngine.sfuPort}  |  방 번호 #${_audioEngine.roomId}',
-                    style: const TextStyle(color: Color(0xFF949BA4), fontSize: 12),
+                    style: const TextStyle(
+                      color: Color(0xFF949BA4),
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -412,8 +488,13 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFFDBDEE1),
                   side: const BorderSide(color: Color(0xFF4E5058)),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 onPressed: widget.onOpenSettings,
                 icon: const Icon(Icons.tune, size: 18),
@@ -426,8 +507,13 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                       ? const Color(0xFFDA373C)
                       : const Color(0xFF23A55A),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   elevation: 0,
                 ),
                 onPressed: widget.onToggleJam,
@@ -446,7 +532,8 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
 
   Widget _buildLatencyStatusBanner() {
     final bufferMs = (_audioEngine.bufferSize / 48.0).toStringAsFixed(2);
-    final totalLatency = (_audioEngine.currentRtt + double.parse(bufferMs)).toStringAsFixed(1);
+    final totalLatency = (_audioEngine.currentRtt + double.parse(bufferMs))
+        .toStringAsFixed(1);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -467,7 +554,11 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             children: [
               const Text(
                 '오인페 버퍼:',
-                style: TextStyle(color: Color(0xFF949BA4), fontSize: 13, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Color(0xFF949BA4),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(width: 8),
               _buildBufferChip(64, '64 samples (1.3ms)'),
@@ -486,7 +577,11 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
               const SizedBox(width: 6),
               Text(
                 'RTT 네트워크: ${_audioEngine.currentRtt.toStringAsFixed(1)}ms',
-                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(width: 12),
               Container(
@@ -497,7 +592,11 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 ),
                 child: Text(
                   '체감 총 지연: 약 $totalLatency ms (연주 동기화 최적)',
-                  style: const TextStyle(color: Color(0xFF23A55A), fontSize: 12, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Color(0xFF23A55A),
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
@@ -521,7 +620,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
           color: isSelected ? const Color(0xFF5865F2) : const Color(0xFF2B2D31),
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
-            color: isSelected ? const Color(0xFF5865F2) : const Color(0xFF3F4147),
+            color: isSelected
+                ? const Color(0xFF5865F2)
+                : const Color(0xFF3F4147),
           ),
         ),
         child: Text(
@@ -547,7 +648,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         }
 
         // 아이템의 최소 너비 기반 종횡비 계산 (오버플로우 원천 방지)
-        final double itemWidth = (constraints.maxWidth - ((crossAxisCount - 1) * 16)) / crossAxisCount;
+        final double itemWidth =
+            (constraints.maxWidth - ((crossAxisCount - 1) * 16)) /
+            crossAxisCount;
         // 카드의 높이는 약 230px 필요
         final double childAspectRatio = (itemWidth / 235).clamp(1.15, 2.2);
 
@@ -597,12 +700,20 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
               color: Color(0xFF2B2D31),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.person_add_alt_1, color: Color(0xFF80848E), size: 22),
+            child: const Icon(
+              Icons.person_add_alt_1,
+              color: Color(0xFF80848E),
+              size: 22,
+            ),
           ),
           const SizedBox(height: 10),
           Text(
             '참여자 $slotNum 대기 중',
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF949BA4)),
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+              color: Color(0xFF949BA4),
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -613,7 +724,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
           Text(
             widget.isJamming ? '● UDP 신호 대기 중...' : '○ 오프라인',
             style: TextStyle(
-              color: widget.isJamming ? const Color(0xFF23A55A) : const Color(0xFF5C5E66),
+              color: widget.isJamming
+                  ? const Color(0xFF23A55A)
+                  : const Color(0xFF5C5E66),
               fontSize: 10,
             ),
           ),
@@ -651,7 +764,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 children: [
                   CircleAvatar(
                     radius: 22,
-                    backgroundColor: isMe ? const Color(0xFF5865F2) : const Color(0xFF4E5058),
+                    backgroundColor: isMe
+                        ? const Color(0xFF5865F2)
+                        : const Color(0xFF4E5058),
                     child: Icon(
                       isMe ? Icons.person : Icons.audiotrack,
                       color: Colors.white,
@@ -666,7 +781,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                           ? const Color(0xFF23A55A)
                           : const Color(0xFF80848E),
                       shape: BoxShape.circle,
-                      border: Border.all(color: const Color(0xFF2B2D31), width: 2),
+                      border: Border.all(
+                        color: const Color(0xFF2B2D31),
+                        width: 2,
+                      ),
                     ),
                   ),
                 ],
@@ -688,7 +806,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                     const SizedBox(height: 2),
                     Text(
                       peer.instrument,
-                      style: const TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                      style: const TextStyle(
+                        color: Color(0xFF949BA4),
+                        fontSize: 11,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -697,7 +818,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
               IconButton(
                 icon: Icon(
                   peer.isMuted ? Icons.volume_off : Icons.volume_up,
-                  color: peer.isMuted ? const Color(0xFFF23F43) : const Color(0xFFB5BAC1),
+                  color: peer.isMuted
+                      ? const Color(0xFFF23F43)
+                      : const Color(0xFFB5BAC1),
                   size: 20,
                 ),
                 onPressed: () {
@@ -724,14 +847,17 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 children: [
                   Text(
                     peer.audioInterface,
-                    style: const TextStyle(color: Color(0xFF80848E), fontSize: 10),
+                    style: const TextStyle(
+                      color: Color(0xFF80848E),
+                      fontSize: 10,
+                    ),
                   ),
                   Text(
-                    widget.isJamming
-                        ? (isMe ? '입력 신호' : '수신 신호')
-                        : '대기 중',
+                    widget.isJamming ? (isMe ? '입력 신호' : '수신 신호') : '대기 중',
                     style: TextStyle(
-                      color: widget.isJamming ? const Color(0xFF23A55A) : const Color(0xFF80848E),
+                      color: widget.isJamming
+                          ? const Color(0xFF23A55A)
+                          : const Color(0xFF80848E),
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
                     ),
@@ -751,8 +877,15 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           colors: level > 0.85
-                              ? [const Color(0xFF23A55A), Colors.amber, const Color(0xFFF23F43)]
-                              : [const Color(0xFF23A55A), const Color(0xFF57F287)],
+                              ? [
+                                  const Color(0xFF23A55A),
+                                  Colors.amber,
+                                  const Color(0xFFF23F43),
+                                ]
+                              : [
+                                  const Color(0xFF23A55A),
+                                  const Color(0xFF57F287),
+                                ],
                         ),
                       ),
                     ),
@@ -767,15 +900,23 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             children: [
               const Text(
                 'VOL',
-                style: TextStyle(color: Color(0xFF80848E), fontSize: 11, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Color(0xFF80848E),
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     trackHeight: 4,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 6,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 12,
+                    ),
                     activeTrackColor: const Color(0xFF5865F2),
                     inactiveTrackColor: const Color(0xFF383A40),
                     thumbColor: Colors.white,

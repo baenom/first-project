@@ -1,0 +1,51 @@
+name: Build Windows Release
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC developer command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build C++ audio_core.dll
+        shell: pwsh
+        run: |
+          cmake -B src/build -S src -DCMAKE_BUILD_TYPE=Release
+          cmake --build src/build --config Release
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Flutter Dependencies
+        run: flutter pub get
+
+      - name: Build Flutter Windows App
+        run: flutter build windows --release
+
+      - name: Package Windows Release with DLLs
+        shell: pwsh
+        run: |
+          if (Test-Path "src/build/Release/audio_core.dll") {
+            Copy-Item "src/build/Release/audio_core.dll" -Destination "build/windows/x64/runner/Release/" -Force
+          }
+          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "gam-windows-x64.zip" -Force
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gam-windows-x64
+          path: gam-windows-x64.zip

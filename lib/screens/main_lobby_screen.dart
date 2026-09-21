@@ -53,8 +53,8 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
 
   JamRoom get _currentRoom =>
       _rooms.isNotEmpty && _selectedRoomIndex < _rooms.length
-          ? _rooms[_selectedRoomIndex]
-          : JamRoom(id: '1', name: '우리들만의 합주실', roomId: 1);
+      ? _rooms[_selectedRoomIndex]
+      : JamRoom(id: '1', name: '우리들만의 합주실', roomId: 1);
 
   @override
   void initState() {
@@ -84,12 +84,24 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
 
   void _openAudioSettingsDialog() {
     bool isHostMode = _currentRoom.isHost || _audioEngine.isSfuServerRunning;
-    final ipController = TextEditingController(text: isHostMode ? '127.0.0.1' : _audioEngine.sfuIp);
-    final portController = TextEditingController(text: _audioEngine.sfuPort.toString());
-    final roomController = TextEditingController(text: _audioEngine.roomId.toString());
-    final userController = TextEditingController(text: _audioEngine.userId.toString());
+    final ipController = TextEditingController(
+      text: isHostMode ? '127.0.0.1' : _audioEngine.sfuIp,
+    );
+    final portController = TextEditingController(
+      text: _audioEngine.sfuPort.toString(),
+    );
+    final roomController = TextEditingController(
+      text: _audioEngine.roomId.toString(),
+    );
+    final userController = TextEditingController(
+      text: _audioEngine.userId.toString(),
+    );
     int tempBuffer = _audioEngine.bufferSize;
-    Map<String, String> localIps = {'tailscale': '', 'lan': '', 'loopback': '127.0.0.1'};
+    Map<String, String> localIps = {
+      'tailscale': '',
+      'lan': '',
+      'loopback': '127.0.0.1',
+    };
 
     _audioEngine.detectHostIps().then((ips) {
       localIps = ips;
@@ -102,12 +114,17 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               backgroundColor: const Color(0xFF2B2D31),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
               title: Row(
                 children: const [
                   Icon(Icons.tune, color: Color(0xFF5865F2)),
                   SizedBox(width: 8),
-                  Text('오인페 및 SFU 서버 설정', style: TextStyle(color: Colors.white, fontSize: 18)),
+                  Text(
+                    '오인페 및 SFU 서버 설정',
+                    style: TextStyle(color: Colors.white, fontSize: 18),
+                  ),
                 ],
               ),
               content: SingleChildScrollView(
@@ -120,21 +137,32 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       // 모드 선택 (방장 모드 vs 게스트 모드)
                       const Text(
                         'SFU 접속 방식 선택',
-                        style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
+                        style: TextStyle(
+                          color: Color(0xFFB5BAC1),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Row(
                         children: [
                           Expanded(
                             child: ChoiceChip(
-                              avatar: const Text('👑', style: TextStyle(fontSize: 12)),
+                              avatar: const Text(
+                                '👑',
+                                style: TextStyle(fontSize: 12),
+                              ),
                               label: const Text('내가 방장 (로컬 SFU)'),
                               selected: isHostMode,
                               selectedColor: const Color(0xFF5865F2),
                               labelStyle: TextStyle(
-                                color: isHostMode ? Colors.white : const Color(0xFFB5BAC1),
+                                color: isHostMode
+                                    ? Colors.white
+                                    : const Color(0xFFB5BAC1),
                                 fontSize: 12,
-                                fontWeight: isHostMode ? FontWeight.bold : FontWeight.normal,
+                                fontWeight: isHostMode
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
                               ),
                               onSelected: (val) {
                                 if (val) {
@@ -149,14 +177,22 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: ChoiceChip(
-                              avatar: const Icon(Icons.headphones, size: 14, color: Color(0xFFDBDEE1)),
+                              avatar: const Icon(
+                                Icons.headphones,
+                                size: 14,
+                                color: Color(0xFFDBDEE1),
+                              ),
                               label: const Text('게스트 (원격 SFU)'),
                               selected: !isHostMode,
                               selectedColor: const Color(0xFF5865F2),
                               labelStyle: TextStyle(
-                                color: !isHostMode ? Colors.white : const Color(0xFFB5BAC1),
+                                color: !isHostMode
+                                    ? Colors.white
+                                    : const Color(0xFFB5BAC1),
                                 fontSize: 12,
-                                fontWeight: !isHostMode ? FontWeight.bold : FontWeight.normal,
+                                fontWeight: !isHostMode
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
                               ),
                               onSelected: (val) {
                                 if (val) {
@@ -181,7 +217,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           decoration: BoxDecoration(
                             color: const Color(0xFF1E1F22),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFFFEE75C).withValues(alpha: 0.4)),
+                            border: Border.all(
+                              color: const Color(
+                                0xFFFEE75C,
+                              ).withValues(alpha: 0.4),
+                            ),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -193,7 +233,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                     height: 8,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: _audioEngine.isSfuServerRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                                      color: _audioEngine.isSfuServerRunning
+                                          ? const Color(0xFF23A55A)
+                                          : const Color(0xFFDA373C),
                                     ),
                                   ),
                                   const SizedBox(width: 6),
@@ -202,7 +244,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                         ? '내장 SFU 중계 서버 실행 중 (피어: ${_audioEngine.sfuServerPeerCount}명)'
                                         : '내장 SFU 서버 대기/정지 상태',
                                     style: TextStyle(
-                                      color: _audioEngine.isSfuServerRunning ? const Color(0xFF23A55A) : const Color(0xFFDA373C),
+                                      color: _audioEngine.isSfuServerRunning
+                                          ? const Color(0xFF23A55A)
+                                          : const Color(0xFFDA373C),
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -210,7 +254,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                   const Spacer(),
                                   TextButton(
                                     onPressed: () {
-                                      final port = int.tryParse(portController.text.trim()) ?? 9999;
+                                      final port =
+                                          int.tryParse(
+                                            portController.text.trim(),
+                                          ) ??
+                                          9999;
                                       if (_audioEngine.isSfuServerRunning) {
                                         _audioEngine.stopHostSfu();
                                       } else {
@@ -219,8 +267,13 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                       setDialogState(() {});
                                     },
                                     child: Text(
-                                      _audioEngine.isSfuServerRunning ? '서버 중지' : '서버 시작',
-                                      style: const TextStyle(fontSize: 11, color: Color(0xFF5865F2)),
+                                      _audioEngine.isSfuServerRunning
+                                          ? '서버 중지'
+                                          : '서버 시작',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF5865F2),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -229,12 +282,18 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               if (localIps['tailscale']?.isNotEmpty ?? false)
                                 Text(
                                   '• Tailscale 초대 IP: ${localIps['tailscale']}:${portController.text.trim()}',
-                                  style: const TextStyle(color: Color(0xFFFEE75C), fontSize: 11),
+                                  style: const TextStyle(
+                                    color: Color(0xFFFEE75C),
+                                    fontSize: 11,
+                                  ),
                                 ),
                               if (localIps['lan']?.isNotEmpty ?? false)
                                 Text(
                                   '• 로컬 LAN IP: ${localIps['lan']}:${portController.text.trim()}',
-                                  style: const TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                                  style: const TextStyle(
+                                    color: Color(0xFF949BA4),
+                                    fontSize: 11,
+                                  ),
                                 ),
                             ],
                           ),
@@ -243,7 +302,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                         TextField(
                           controller: portController,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
                           decoration: const InputDecoration(
                             labelText: 'SFU UDP 포트 (기본 9999)',
                             hintText: '9999',
@@ -259,7 +321,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               flex: 3,
                               child: TextField(
                                 controller: ipController,
-                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
                                 decoration: const InputDecoration(
                                   labelText: '방장 Tailscale IP 또는 NAS IP',
                                   hintText: '예: 100.85.x.x 또는 192.168.0.x',
@@ -274,7 +339,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               child: TextField(
                                 controller: portController,
                                 keyboardType: TextInputType.number,
-                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
                                 decoration: const InputDecoration(
                                   labelText: 'UDP 포트',
                                   hintText: '9999',
@@ -293,7 +361,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                             child: TextField(
                               controller: roomController,
                               keyboardType: TextInputType.number,
-                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                              ),
                               decoration: const InputDecoration(
                                 labelText: '방 번호 (Room ID)',
                                 border: OutlineInputBorder(),
@@ -306,7 +377,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                             child: TextField(
                               controller: userController,
                               keyboardType: TextInputType.number,
-                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                              ),
                               decoration: const InputDecoration(
                                 labelText: '내 유저 ID',
                                 border: OutlineInputBorder(),
@@ -319,7 +393,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       const SizedBox(height: 18),
                       const Text(
                         '오디오 인터페이스 버퍼 사이즈 (초저지연)',
-                        style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
+                        style: TextStyle(
+                          color: Color(0xFFB5BAC1),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Wrap(
@@ -327,14 +405,18 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                         children: [64, 128, 256].map((size) {
                           final selected = tempBuffer == size;
                           return ChoiceChip(
-                            label: Text('$size samples (${(size / 48.0).toStringAsFixed(1)}ms)'),
+                            label: Text(
+                              '$size samples (${(size / 48.0).toStringAsFixed(1)}ms)',
+                            ),
                             selected: selected,
                             onSelected: (val) {
                               if (val) setDialogState(() => tempBuffer = size);
                             },
                             selectedColor: const Color(0xFF5865F2),
                             labelStyle: TextStyle(
-                              color: selected ? Colors.white : const Color(0xFFB5BAC1),
+                              color: selected
+                                  ? Colors.white
+                                  : const Color(0xFFB5BAC1),
                               fontSize: 12,
                             ),
                           );
@@ -350,8 +432,12 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                         child: Row(
                           children: [
                             Icon(
-                              _audioEngine.isNativeLoaded ? Icons.check_circle : Icons.info_outline,
-                              color: _audioEngine.isNativeLoaded ? const Color(0xFF23A55A) : Colors.amber,
+                              _audioEngine.isNativeLoaded
+                                  ? Icons.check_circle
+                                  : Icons.info_outline,
+                              color: _audioEngine.isNativeLoaded
+                                  ? const Color(0xFF23A55A)
+                                  : Colors.amber,
                               size: 18,
                             ),
                             const SizedBox(width: 8),
@@ -361,7 +447,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                     ? 'C++ 네이티브 오디오 코어 연결됨 (ASIO / CoreAudio 직결)'
                                     : '시뮬레이션 모드 (C++ 공유 라이브러리 빌드 대기)',
                                 style: TextStyle(
-                                  color: _audioEngine.isNativeLoaded ? const Color(0xFF23A55A) : Colors.amber,
+                                  color: _audioEngine.isNativeLoaded
+                                      ? const Color(0xFF23A55A)
+                                      : Colors.amber,
                                   fontSize: 11,
                                 ),
                               ),
@@ -376,15 +464,22 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('닫기', style: TextStyle(color: Color(0xFF949BA4))),
+                  child: const Text(
+                    '닫기',
+                    style: TextStyle(color: Color(0xFF949BA4)),
+                  ),
                 ),
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF5865F2),
+                  ),
                   onPressed: () {
                     final ip = ipController.text.trim();
-                    final port = int.tryParse(portController.text.trim()) ?? 9999;
+                    final port =
+                        int.tryParse(portController.text.trim()) ?? 9999;
                     final room = int.tryParse(roomController.text.trim()) ?? 1;
-                    final user = int.tryParse(userController.text.trim()) ?? 101;
+                    final user =
+                        int.tryParse(userController.text.trim()) ?? 101;
 
                     if (isHostMode) {
                       _audioEngine.startHostSfu(port: port);
@@ -398,15 +493,20 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(isHostMode
-                            ? '방장 모드(내장 SFU 서버)가 활성화되었습니다. (루프백 0ms)'
-                            : '게스트 모드로 SFU 서버 ($ip:$port)에 연결되었습니다.'),
+                        content: Text(
+                          isHostMode
+                              ? '방장 모드(내장 SFU 서버)가 활성화되었습니다. (루프백 0ms)'
+                              : '게스트 모드로 SFU 서버 ($ip:$port)에 연결되었습니다.',
+                        ),
                         backgroundColor: const Color(0xFF23A55A),
                         duration: const Duration(seconds: 3),
                       ),
                     );
                   },
-                  child: const Text('설정 저장', style: TextStyle(color: Colors.white)),
+                  child: const Text(
+                    '설정 저장',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
               ],
             );
@@ -448,7 +548,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           children: [
             Icon(room.icon, color: Colors.white, size: 18),
             const SizedBox(width: 8),
-            Text('\'${room.name}\' 합주실로 이동했습니다 (방 #${room.roomId} ${room.isHost ? '• 내가 방장' : ''})'),
+            Text(
+              '\'${room.name}\' 합주실로 이동했습니다 (방 #${room.roomId} ${room.isHost ? '• 내가 방장' : ''})',
+            ),
           ],
         ),
         backgroundColor: const Color(0xFF5865F2),
@@ -458,7 +560,8 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   }
 
   void _openCreateRoomDialog() {
-    final nextRoomId = _rooms.fold<int>(0, (max, r) => r.roomId > max ? r.roomId : max) + 1;
+    final nextRoomId =
+        _rooms.fold<int>(0, (max, r) => r.roomId > max ? r.roomId : max) + 1;
     final nameController = TextEditingController(text: '새 합주실 #$nextRoomId');
     final idController = TextEditingController(text: nextRoomId.toString());
     final descController = TextEditingController();
@@ -484,12 +587,21 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               backgroundColor: const Color(0xFF2B2D31),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
               title: Row(
                 children: const [
                   Icon(Icons.add_circle, color: Color(0xFF5865F2)),
                   SizedBox(width: 8),
-                  Text('새 합주실 개설', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text(
+                    '새 합주실 개설',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               content: SingleChildScrollView(
@@ -501,12 +613,17 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     children: [
                       // 방장 호스트 모드 여부 토글
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFF1E1F22),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: isHost ? const Color(0xFFFEE75C).withValues(alpha: 0.6) : const Color(0xFF383A40),
+                            color: isHost
+                                ? const Color(0xFFFEE75C).withValues(alpha: 0.6)
+                                : const Color(0xFF383A40),
                           ),
                         ),
                         child: Column(
@@ -514,18 +631,25 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           children: [
                             Row(
                               children: [
-                                const Text('👑 ', style: TextStyle(fontSize: 16)),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: const [
                                       Text(
                                         '내가 이 방의 SFU 호스트(방장) 되기',
-                                        style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                       Text(
                                         '내 컴퓨터에서 SFU 서버를 자동 실행하고 Tailscale로 친구를 초대합니다.',
-                                        style: TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                                        style: TextStyle(
+                                          color: Color(0xFF949BA4),
+                                          fontSize: 11,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -545,7 +669,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               const SizedBox(height: 10),
                               TextField(
                                 controller: remoteIpController,
-                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
                                 decoration: const InputDecoration(
                                   labelText: '접속할 SFU 서버 IP (방장의 Tailscale IP)',
                                   hintText: '100.85.x.x 또는 192.168.0.x',
@@ -560,12 +687,19 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       const SizedBox(height: 16),
                       const Text(
                         '합주실 기본 정보',
-                        style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
+                        style: TextStyle(
+                          color: Color(0xFFB5BAC1),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                       const SizedBox(height: 10),
                       TextField(
                         controller: nameController,
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
                         decoration: const InputDecoration(
                           labelText: '합주실 이름',
                           hintText: '예: 주말 재즈 잼 세션, 락 밴드 합주실',
@@ -577,7 +711,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       TextField(
                         controller: idController,
                         keyboardType: TextInputType.number,
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
                         decoration: const InputDecoration(
                           labelText: 'SFU 방 번호 (Room ID)',
                           hintText: '1, 2, 3...',
@@ -587,13 +724,21 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        isHost ? '* 내 맥북의 내장 SFU 서버에 고유 채널 번호로 개설됩니다.' : '* 홈 NAS/원격 SFU 서버의 방 번호입니다.',
-                        style: const TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                        isHost
+                            ? '* 내 맥북의 내장 SFU 서버에 고유 채널 번호로 개설됩니다.'
+                            : '* 홈 NAS/원격 SFU 서버의 방 번호입니다.',
+                        style: const TextStyle(
+                          color: Color(0xFF949BA4),
+                          fontSize: 11,
+                        ),
                       ),
                       const SizedBox(height: 14),
                       TextField(
                         controller: descController,
-                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                        ),
                         decoration: const InputDecoration(
                           labelText: '합주실 소개 (선택)',
                           hintText: '예: 기타/베이스/드럼 세션 자유 잼',
@@ -604,7 +749,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       const SizedBox(height: 16),
                       const Text(
                         '합주실 아이콘 선택',
-                        style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
+                        style: TextStyle(
+                          color: Color(0xFFB5BAC1),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                       const SizedBox(height: 10),
                       Wrap(
@@ -613,23 +762,30 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                         children: availableIcons.map((iconData) {
                           final isSelected = selectedIcon == iconData;
                           return InkWell(
-                            onTap: () => setDialogState(() => selectedIcon = iconData),
+                            onTap: () =>
+                                setDialogState(() => selectedIcon = iconData),
                             borderRadius: BorderRadius.circular(10),
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 150),
                               width: 44,
                               height: 44,
                               decoration: BoxDecoration(
-                                color: isSelected ? const Color(0xFF5865F2) : const Color(0xFF1E1F22),
+                                color: isSelected
+                                    ? const Color(0xFF5865F2)
+                                    : const Color(0xFF1E1F22),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: isSelected ? Colors.white : const Color(0xFF383A40),
+                                  color: isSelected
+                                      ? Colors.white
+                                      : const Color(0xFF383A40),
                                   width: isSelected ? 2 : 1,
                                 ),
                               ),
                               child: Icon(
                                 iconData,
-                                color: isSelected ? Colors.white : const Color(0xFF949BA4),
+                                color: isSelected
+                                    ? Colors.white
+                                    : const Color(0xFF949BA4),
                                 size: 22,
                               ),
                             ),
@@ -643,10 +799,15 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+                  child: const Text(
+                    '취소',
+                    style: TextStyle(color: Color(0xFF949BA4)),
+                  ),
                 ),
                 ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF5865F2),
+                  ),
                   onPressed: () {
                     final name = nameController.text.trim();
                     if (name.isEmpty) {
@@ -659,7 +820,8 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       );
                       return;
                     }
-                    final roomId = int.tryParse(idController.text.trim()) ?? nextRoomId;
+                    final roomId =
+                        int.tryParse(idController.text.trim()) ?? nextRoomId;
 
                     final newRoom = JamRoom(
                       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -668,7 +830,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       icon: selectedIcon,
                       description: descController.text.trim(),
                       isHost: isHost,
-                      remoteIp: isHost ? '127.0.0.1' : remoteIpController.text.trim(),
+                      remoteIp: isHost
+                          ? '127.0.0.1'
+                          : remoteIpController.text.trim(),
                     );
 
                     setState(() {
@@ -687,7 +851,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     } else {
                       _audioEngine.stopHostSfu();
                       _audioEngine.configureSfu(
-                        newRoom.remoteIp.isNotEmpty ? newRoom.remoteIp : _audioEngine.sfuIp,
+                        newRoom.remoteIp.isNotEmpty
+                            ? newRoom.remoteIp
+                            : _audioEngine.sfuIp,
                         _audioEngine.sfuPort,
                         newRoom.roomId,
                         _audioEngine.userId,
@@ -699,16 +865,24 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     ScaffoldMessenger.of(context).hideCurrentSnackBar();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(isHost
-                            ? '\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId • 내 SFU 서버 가동)'
-                            : '\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId)'),
+                        content: Text(
+                          isHost
+                              ? '\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId • 내 SFU 서버 가동)'
+                              : '\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId)',
+                        ),
                         backgroundColor: const Color(0xFF23A55A),
                         duration: const Duration(seconds: 3),
                       ),
                     );
                   },
                   icon: const Icon(Icons.check, color: Colors.white, size: 18),
-                  label: const Text('합주실 개설', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  label: const Text(
+                    '합주실 개설',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
             );
@@ -736,8 +910,13 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2B2D31),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          title: const Text('합주실 닫기', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          title: const Text(
+            '합주실 닫기',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
           content: Text(
             '\'${current.name}\' 합주실을 닫고 목록에서 제거하시겠습니까?',
             style: const TextStyle(color: Color(0xFFDBDEE1)),
@@ -745,14 +924,22 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+              child: const Text(
+                '취소',
+                style: TextStyle(color: Color(0xFF949BA4)),
+              ),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF23F43)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFF23F43),
+              ),
               onPressed: () {
                 setState(() {
                   _rooms.removeAt(_selectedRoomIndex);
-                  _selectedRoomIndex = _selectedRoomIndex.clamp(0, _rooms.length - 1);
+                  _selectedRoomIndex = _selectedRoomIndex.clamp(
+                    0,
+                    _rooms.length - 1,
+                  );
                 });
                 _audioEngine.configureSfu(
                   _audioEngine.sfuIp,
@@ -790,7 +977,73 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
         }
       }
     } catch (_) {}
-    return '의진';
+    return '합주자';
+  }
+
+  void _openEditNicknameDialog() {
+    final controller = TextEditingController(text: _currentUserName);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2B2D31),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: Row(
+            children: const [
+              Icon(Icons.badge, color: Color(0xFF5865F2)),
+              SizedBox(width: 8),
+              Text(
+                '닉네임(활동명) 변경',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            decoration: const InputDecoration(
+              labelText: '새 닉네임',
+              hintText: '합주실과 채팅에서 표시될 이름',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2)),
+              onPressed: () async {
+                final newName = controller.text.trim();
+                if (newName.isNotEmpty) {
+                  try {
+                    await FirebaseAuth.instance.currentUser?.updateDisplayName(newName);
+                    if (mounted) {
+                      setState(() {});
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('닉네임이 \'$newName\'(으)로 변경되었습니다.'),
+                          backgroundColor: const Color(0xFF23A55A),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    debugPrint('Failed to update nickname: $e');
+                  }
+                }
+                if (context.mounted) Navigator.pop(context);
+              },
+              child: const Text('변경 저장', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _confirmLogout() async {
@@ -799,12 +1052,21 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2B2D31),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           title: Row(
             children: const [
               Icon(Icons.logout, color: Color(0xFFF23F43)),
               SizedBox(width: 8),
-              Text('로그아웃', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+              Text(
+                '로그아웃',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
             ],
           ),
           content: const Text(
@@ -814,12 +1076,23 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+              child: const Text(
+                '취소',
+                style: TextStyle(color: Color(0xFF949BA4)),
+              ),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF23F43)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFF23F43),
+              ),
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('로그아웃', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              child: const Text(
+                '로그아웃',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ],
         );
@@ -875,12 +1148,17 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               _buildServerIcon(
                                 icon: _rooms[i].icon,
                                 isActive: _selectedRoomIndex == i,
-                                tooltip: '${_rooms[i].name} (방 #${_rooms[i].roomId})',
+                                tooltip:
+                                    '${_rooms[i].name} (방 #${_rooms[i].roomId})',
                                 onTap: () => _selectRoom(i),
                               ),
                               const SizedBox(height: 8),
                             ],
-                            const Divider(color: Color(0xFF35363C), indent: 16, endIndent: 16),
+                            const Divider(
+                              color: Color(0xFF35363C),
+                              indent: 16,
+                              endIndent: 16,
+                            ),
                             const SizedBox(height: 8),
                             _buildServerIcon(
                               icon: Icons.add,
@@ -894,7 +1172,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.settings, color: Color(0xFF949BA4)),
+                      icon: const Icon(
+                        Icons.settings,
+                        color: Color(0xFF949BA4),
+                      ),
                       onPressed: _openAudioSettingsDialog,
                       tooltip: '오인페 / NAS 설정',
                     ),
@@ -916,12 +1197,16 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       alignment: Alignment.centerLeft,
                       decoration: const BoxDecoration(
-                        border: Border(bottom: BorderSide(color: Color(0xFF1F2023))),
+                        border: Border(
+                          bottom: BorderSide(color: Color(0xFF1F2023)),
+                        ),
                       ),
                       child: PopupMenuButton<String>(
                         color: const Color(0xFF2B2D31),
                         offset: const Offset(0, 48),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                         tooltip: '합주실 옵션',
                         onSelected: (value) {
                           if (value == 'create') {
@@ -939,9 +1224,19 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                             value: 'create',
                             child: Row(
                               children: const [
-                                Icon(Icons.add_circle_outline, color: Color(0xFF5865F2), size: 18),
+                                Icon(
+                                  Icons.add_circle_outline,
+                                  color: Color(0xFF5865F2),
+                                  size: 18,
+                                ),
                                 SizedBox(width: 8),
-                                Text('새 합주실 개설', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                Text(
+                                  '새 합주실 개설',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -949,9 +1244,19 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                             value: 'settings',
                             child: Row(
                               children: const [
-                                Icon(Icons.tune, color: Color(0xFF949BA4), size: 18),
+                                Icon(
+                                  Icons.tune,
+                                  color: Color(0xFF949BA4),
+                                  size: 18,
+                                ),
                                 SizedBox(width: 8),
-                                Text('오인페 및 SFU 설정', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                Text(
+                                  '오인페 및 SFU 설정',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -960,9 +1265,19 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               value: 'delete',
                               child: Row(
                                 children: const [
-                                  Icon(Icons.delete_outline, color: Color(0xFFF23F43), size: 18),
+                                  Icon(
+                                    Icons.delete_outline,
+                                    color: Color(0xFFF23F43),
+                                    size: 18,
+                                  ),
                                   SizedBox(width: 8),
-                                  Text('현재 합주실 닫기', style: TextStyle(color: Color(0xFFF23F43), fontSize: 13)),
+                                  Text(
+                                    '현재 합주실 닫기',
+                                    style: TextStyle(
+                                      color: Color(0xFFF23F43),
+                                      fontSize: 13,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -971,9 +1286,19 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                             value: 'logout',
                             child: Row(
                               children: const [
-                                Icon(Icons.logout, color: Color(0xFFF23F43), size: 18),
+                                Icon(
+                                  Icons.logout,
+                                  color: Color(0xFFF23F43),
+                                  size: 18,
+                                ),
                                 SizedBox(width: 8),
-                                Text('로그아웃', style: TextStyle(color: Color(0xFFF23F43), fontSize: 13)),
+                                Text(
+                                  '로그아웃',
+                                  style: TextStyle(
+                                    color: Color(0xFFF23F43),
+                                    fontSize: 13,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -991,7 +1316,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            const Icon(Icons.keyboard_arrow_down, color: Color(0xFF949BA4), size: 18),
+                            const Icon(
+                              Icons.keyboard_arrow_down,
+                              color: Color(0xFF949BA4),
+                              size: 18,
+                            ),
                           ],
                         ),
                       ),
@@ -1000,10 +1329,16 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     // 채널 카테고리 & 목록
                     Expanded(
                       child: ListView(
-                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 8,
+                          horizontal: 8,
+                        ),
                         children: [
                           const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
                             child: Text(
                               '오디오 채널',
                               style: TextStyle(
@@ -1022,7 +1357,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           ),
                           const SizedBox(height: 16),
                           const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
                             child: Text(
                               '소통 및 조율',
                               style: TextStyle(
@@ -1049,65 +1387,125 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
 
                     // 하단 내 프로필 & 오인페 상태 영역
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 10,
+                      ),
                       color: const Color(0xFF232428),
                       child: Row(
                         children: [
-                          Stack(
-                            alignment: Alignment.bottomRight,
-                            children: [
-                              CircleAvatar(
-                                radius: 18,
-                                backgroundColor: const Color(0xFF5865F2),
-                                child: Text(
-                                  _currentUserName.isNotEmpty ? _currentUserName[0].toUpperCase() : '의',
-                                  style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                              Container(
-                                width: 10,
-                                height: 10,
-                                decoration: BoxDecoration(
-                                  color: _audioEngine.isStreaming ? const Color(0xFF23A55A) : const Color(0xFF80848E),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: const Color(0xFF232428), width: 1.5),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(width: 8),
                           Expanded(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '$_currentUserName (나)',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                Text(
-                                  _audioEngine.isStreaming ? 'UDP 스트리밍 중' : '오인페 대기중',
-                                  style: TextStyle(
-                                    color: _audioEngine.isStreaming ? const Color(0xFF23A55A) : const Color(0xFF949BA4),
-                                    fontSize: 10,
+                            child: Tooltip(
+                              message: '클릭하여 닉네임(활동명) 변경',
+                              child: InkWell(
+                                onTap: _openEditNicknameDialog,
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
+                                  child: Row(
+                                    children: [
+                                      Stack(
+                                        alignment: Alignment.bottomRight,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 18,
+                                            backgroundColor: const Color(0xFF5865F2),
+                                            child: Text(
+                                              _currentUserName.isNotEmpty
+                                                  ? _currentUserName[0].toUpperCase()
+                                                  : '합',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                          Container(
+                                            width: 10,
+                                            height: 10,
+                                            decoration: BoxDecoration(
+                                              color: _audioEngine.isStreaming
+                                                  ? const Color(0xFF23A55A)
+                                                  : const Color(0xFF80848E),
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color: const Color(0xFF232428),
+                                                width: 1.5,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    '$_currentUserName (나)',
+                                                    style: const TextStyle(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 13,
+                                                      color: Colors.white,
+                                                    ),
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                const Icon(
+                                                  Icons.edit_outlined,
+                                                  size: 13,
+                                                  color: Color(0xFF949BA4),
+                                                ),
+                                              ],
+                                            ),
+                                            Text(
+                                              _audioEngine.isStreaming
+                                                  ? 'UDP 스트리밍 중'
+                                                  : '오인페 대기중',
+                                              style: TextStyle(
+                                                color: _audioEngine.isStreaming
+                                                    ? const Color(0xFF23A55A)
+                                                    : const Color(0xFF949BA4),
+                                                fontSize: 10,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ],
+                              ),
                             ),
                           ),
                           IconButton(
                             icon: Icon(
-                              _audioEngine.isStreaming ? Icons.mic : Icons.mic_off,
-                              color: _audioEngine.isStreaming ? const Color(0xFF23A55A) : const Color(0xFFF23F43),
+                              _audioEngine.isStreaming
+                                  ? Icons.mic
+                                  : Icons.mic_off,
+                              color: _audioEngine.isStreaming
+                                  ? const Color(0xFF23A55A)
+                                  : const Color(0xFFF23F43),
                               size: 20,
                             ),
                             onPressed: _toggleJamming,
-                            tooltip: _audioEngine.isStreaming ? '합주 송출 중지' : '합주 송출 시작',
+                            tooltip: _audioEngine.isStreaming
+                                ? '합주 송출 중지'
+                                : '합주 송출 시작',
                           ),
                           IconButton(
-                            icon: const Icon(Icons.logout, color: Color(0xFF949BA4), size: 18),
+                            icon: const Icon(
+                              Icons.logout,
+                              color: Color(0xFF949BA4),
+                              size: 18,
+                            ),
                             onPressed: _confirmLogout,
                             tooltip: '로그아웃',
                           ),
@@ -1191,10 +1589,17 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                   decoration: BoxDecoration(
                     color: isActive
                         ? const Color(0xFF5865F2)
-                        : (isAddButton ? const Color(0xFF2B2D31) : const Color(0xFF313338)),
+                        : (isAddButton
+                              ? const Color(0xFF2B2D31)
+                              : const Color(0xFF313338)),
                     borderRadius: BorderRadius.circular(isActive ? 16 : 24),
                     border: isAddButton
-                        ? Border.all(color: const Color(0xFF23A55A).withValues(alpha: 0.5), width: 1.5)
+                        ? Border.all(
+                            color: const Color(
+                              0xFF23A55A,
+                            ).withValues(alpha: 0.5),
+                            width: 1.5,
+                          )
                         : null,
                   ),
                   child: Icon(
@@ -1226,40 +1631,45 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
         color: isSelected ? const Color(0xFF404249) : Colors.transparent,
         borderRadius: BorderRadius.circular(6),
         child: ListTile(
-        leading: Icon(
-          icon,
-          color: isSelected ? Colors.white : const Color(0xFF80848E),
-          size: 18,
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: isSelected ? Colors.white : const Color(0xFF949BA4),
-                  fontSize: 13,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (isLive)
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF23A55A),
-                  shape: BoxShape.circle,
+          leading: Icon(
+            icon,
+            color: isSelected ? Colors.white : const Color(0xFF80848E),
+            size: 18,
+          ),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : const Color(0xFF949BA4),
+                    fontSize: 13,
+                    fontWeight: isSelected
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-          ],
+              if (isLive)
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF23A55A),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+            ],
+          ),
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 0,
+          ),
+          onTap: () => setState(() => _selectedChannel = index),
         ),
-        dense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-        onTap: () => setState(() => _selectedChannel = index),
       ),
-    ),
-  );
+    );
   }
 }

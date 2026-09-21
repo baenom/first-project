@@ -31,6 +31,17 @@ class _ChatViewState extends State<ChatView> {
     return null;
   }
 
+  String _getSenderName([User? user]) {
+    final u = user ?? _currentUser;
+    if (u?.displayName != null && u!.displayName!.trim().isNotEmpty) {
+      return u.displayName!;
+    }
+    if (u?.email != null && u!.email!.trim().isNotEmpty) {
+      return u.email!.split('@').first;
+    }
+    return '합주자';
+  }
+
   // 로컬 폴백 메시지 목록 (네트워크 단절 시 임시 보관)
   final List<Map<String, dynamic>> _fallbackMessages = [];
   bool _isSending = false;
@@ -47,11 +58,7 @@ class _ChatViewState extends State<ChatView> {
         throw Exception('Firebase가 초기화되지 않았습니다.');
       }
       final user = _currentUser;
-      final senderName = (user?.displayName != null && user!.displayName!.isNotEmpty)
-          ? user.displayName!
-          : (user?.email != null && user!.email!.isNotEmpty
-              ? user.email!.split('@').first
-              : '의진');
+      final senderName = _getSenderName(user);
 
       await FirebaseFirestore.instance.collection('chats').add({
         'text': text,
@@ -83,7 +90,7 @@ class _ChatViewState extends State<ChatView> {
       }
       setState(() {
         _fallbackMessages.add({
-          'sender': _currentUser?.email?.split('@').first ?? '의진',
+          'sender': _getSenderName(_currentUser),
           'text': text,
           'time': '로컬 보관 (업로드 실패)',
           'isMe': true,
@@ -202,7 +209,7 @@ class _ChatViewState extends State<ChatView> {
                 final userId = (data['userId'] as String?) ?? '';
 
                 final isMe = (myUser != null && (myUser.uid == userId || (myUser.email != null && myUser.email == senderEmail)))
-                    || (myUser == null && sender == '의진');
+                    || (myUser == null && sender == _getSenderName());
 
                 String timeStr = '방금';
                 if (data['timestamp'] is Timestamp) {

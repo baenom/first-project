@@ -129,8 +129,11 @@ class AudioEngine extends ChangeNotifier {
 
   void _tryLoadNativeLibrary() {
     try {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
       if (Platform.isMacOS) {
         final candidates = [
+          '$exeDir/libaudio_core.dylib',
+          '$exeDir/../Frameworks/libaudio_core.dylib',
           'src/build/libaudio_core.dylib',
           'libaudio_core.dylib',
           '${Directory.current.path}/src/build/libaudio_core.dylib',
@@ -145,6 +148,7 @@ class AudioEngine extends ChangeNotifier {
         _dylib ??= ffi.DynamicLibrary.open('libaudio_core.dylib');
       } else if (Platform.isWindows) {
         final candidates = [
+          '$exeDir/audio_core.dll',
           'src/build/Release/audio_core.dll',
           'src/build/audio_core.dll',
           'audio_core.dll',

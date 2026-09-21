@@ -112,5 +112,50 @@ void main() {
 
     expect(find.text('정말 합주실에서 로그아웃하시겠습니까?\n저장된 로그인 세션이 해제됩니다.'), findsNothing);
   });
+
+  testWidgets('LoginScreen toggles to sign up mode and displays nickname input field', (WidgetTester tester) async {
+    await tester.pumpWidget(const SyncRoomApp());
+    await tester.pump();
+
+    // In login mode, nickname field is not present
+    expect(find.text('합주실 닉네임 (활동명)'), findsNothing);
+
+    // Tap toggle to sign up mode ("새 멤버 등록이 필요하신가요? 회원가입")
+    final toggleBtn = find.text('새 멤버 등록이 필요하신가요? 회원가입');
+    expect(toggleBtn, findsOneWidget);
+    await tester.tap(toggleBtn);
+    await tester.pump();
+
+    // In sign up mode, nickname field is visible
+    expect(find.text('합주 멤버 가입'), findsOneWidget);
+    expect(find.text('합주실 닉네임 (활동명)'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, '계정 생성 후 입장'), findsOneWidget);
+  });
+
+  testWidgets('MainLobbyScreen clicking profile opens edit nickname dialog', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+
+    await tester.pumpWidget(const MaterialApp(home: MainLobbyScreen()));
+    await tester.pump();
+
+    // Click profile area with tooltip
+    final profileTooltip = find.byTooltip('클릭하여 닉네임(활동명) 변경');
+    expect(profileTooltip, findsOneWidget);
+
+    await tester.tap(profileTooltip);
+    await tester.pumpAndSettle();
+
+    // Verify nickname dialog opened
+    expect(find.text('닉네임(활동명) 변경'), findsOneWidget);
+    expect(find.text('새 닉네임'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, '변경 저장'), findsOneWidget);
+
+    // Cancel dialog
+    await tester.tap(find.widgetWithText(TextButton, '취소'));
+    await tester.pumpAndSettle();
+    expect(find.text('닉네임(활동명) 변경'), findsNothing);
+  });
 }
 

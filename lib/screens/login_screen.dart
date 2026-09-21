@@ -12,6 +12,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _nicknameController = TextEditingController();
   bool _isSignUp = false;
   String _errorMessage = '';
   bool _isLoading = false;
@@ -19,9 +20,15 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _submit() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
+    final nickname = _nicknameController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
       setState(() => _errorMessage = '이메일과 비밀번호를 모두 입력해주세요.');
+      return;
+    }
+
+    if (_isSignUp && nickname.isEmpty) {
+      setState(() => _errorMessage = '합주실에서 사용할 닉네임(활동명)을 입력해주세요.');
       return;
     }
 
@@ -32,10 +39,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       if (_isSignUp) {
-        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
           email: email,
           password: password,
         );
+        if (nickname.isNotEmpty) {
+          await cred.user?.updateDisplayName(nickname);
+        }
       } else {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: email,
@@ -62,17 +72,11 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // void _bypassForTesting() {
-  //   Navigator.pushReplacement(
-  //     context,
-  //     MaterialPageRoute(builder: (context) => const MainLobbyScreen()),
-  //   );
-  // }
-
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _nicknameController.dispose();
     super.dispose();
   }
 
@@ -154,6 +158,44 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 28),
 
                 // 텍스트 필드
+                if (_isSignUp) ...[
+                  const Text(
+                    '합주실 닉네임 (활동명)',
+                    style: TextStyle(
+                      color: Color(0xFFB5BAC1),
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _nicknameController,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: '예: 베이시스트 민수, 기타리스트 철수',
+                      hintStyle: const TextStyle(color: Color(0xFF5C5E66)),
+                      filled: true,
+                      fillColor: const Color(0xFF1E1F22),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(
+                          color: Color(0xFF5865F2),
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
                 const Text(
                   '이메일',
                   style: TextStyle(

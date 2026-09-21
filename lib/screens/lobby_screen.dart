@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class JamScheduleItem {
   final String id;
@@ -26,7 +28,6 @@ class LobbyScreen extends StatefulWidget {
 }
 
 class _LobbyScreenState extends State<LobbyScreen> {
-
   // 합주 일정 목록 (초기화 완료, 새 일정 생성 시 추가됨)
   final List<JamScheduleItem> _schedules = [];
 
@@ -34,14 +35,34 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final _dateController = TextEditingController();
   final _setlistController = TextEditingController();
 
+  String _getMyMemberName() {
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user?.displayName != null && user!.displayName!.trim().isNotEmpty) {
+          return '${user.displayName!} (나)';
+        }
+        if (user?.email != null && user!.email!.trim().isNotEmpty) {
+          return '${user.email!.split('@').first} (나)';
+        }
+      }
+    } catch (_) {}
+    return '합주자 (나)';
+  }
+
   void _showAddScheduleDialog() {
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2B2D31),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          title: const Text('새 합주 일정 추가', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          title: const Text(
+            '새 합주 일정 추가',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
           content: SingleChildScrollView(
             child: SizedBox(
               width: 400,
@@ -88,10 +109,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+              child: const Text(
+                '취소',
+                style: TextStyle(color: Color(0xFF949BA4)),
+              ),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5865F2),
+              ),
               onPressed: () {
                 if (_titleController.text.trim().isNotEmpty) {
                   setState(() {
@@ -100,14 +126,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       JamScheduleItem(
                         id: DateTime.now().millisecondsSinceEpoch.toString(),
                         title: _titleController.text.trim(),
-                        dateString: _dateController.text.trim().isEmpty ? '날짜 미정' : _dateController.text.trim(),
-                        setlist: _setlistController.text.trim().isEmpty ? '자유 잼' : _setlistController.text.trim(),
-                        confirmedMembers: ['의진 (나)'],
+                        dateString: _dateController.text.trim().isEmpty
+                            ? '날짜 미정'
+                            : _dateController.text.trim(),
+                        setlist: _setlistController.text.trim().isEmpty
+                            ? '자유 잼'
+                            : _setlistController.text.trim(),
+                        confirmedMembers: [_getMyMemberName()],
                         pendingMembers: ['친구 A', '친구 B'],
                       ),
                     );
                   });
                   _titleController.clear();
+
                   _dateController.clear();
                   _setlistController.clear();
                   Navigator.pop(context);
@@ -145,7 +176,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 children: const [
                   Text(
                     '합주 일정 조율 및 투표',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
                   SizedBox(height: 4),
                   Text(
@@ -157,12 +192,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF5865F2),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 onPressed: _showAddScheduleDialog,
                 icon: const Icon(Icons.add, color: Colors.white, size: 18),
-                label: const Text('새 일정 생성', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                label: const Text(
+                  '새 일정 생성',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ],
           ),
@@ -181,11 +227,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: const [
-                  Icon(Icons.event_available, size: 48, color: Color(0xFF4E5058)),
+                  Icon(
+                    Icons.event_available,
+                    size: 48,
+                    color: Color(0xFF4E5058),
+                  ),
                   SizedBox(height: 12),
                   Text(
                     '예정된 합주 일정이 없습니다.',
-                    style: TextStyle(color: Color(0xFF949BA4), fontSize: 16, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: Color(0xFF949BA4),
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   SizedBox(height: 6),
                   Text(
@@ -212,7 +266,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildScheduleCard(JamScheduleItem schedule) {
-    final bool isMyConfirmed = schedule.confirmedMembers.contains('의진 (나)');
+    final myTag = _getMyMemberName();
+    final bool isMyConfirmed = schedule.confirmedMembers.contains(myTag);
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -230,11 +285,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
               Expanded(
                 child: Text(
                   schedule.title,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: isMyConfirmed
                       ? const Color(0xFF23A55A).withValues(alpha: 0.15)
@@ -244,7 +306,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 child: Text(
                   isMyConfirmed ? '참가 확정됨' : '미확정',
                   style: TextStyle(
-                    color: isMyConfirmed ? const Color(0xFF23A55A) : const Color(0xFFF23F43),
+                    color: isMyConfirmed
+                        ? const Color(0xFF23A55A)
+                        : const Color(0xFFF23F43),
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
@@ -255,11 +319,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              const Icon(Icons.calendar_month, color: Color(0xFF5865F2), size: 16),
+              const Icon(
+                Icons.calendar_month,
+                color: Color(0xFF5865F2),
+                size: 16,
+              ),
               const SizedBox(width: 6),
               Text(
                 schedule.dateString,
-                style: const TextStyle(color: Color(0xFFDBDEE1), fontSize: 13, fontWeight: FontWeight.w500),
+                style: const TextStyle(
+                  color: Color(0xFFDBDEE1),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
@@ -276,12 +348,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
               children: [
                 const Text(
                   '🎸 셋리스트 (합주곡):',
-                  style: TextStyle(color: Color(0xFF949BA4), fontSize: 12, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Color(0xFF949BA4),
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   schedule.setlist,
-                  style: const TextStyle(color: Color(0xFFDBDEE1), fontSize: 13, height: 1.4),
+                  style: const TextStyle(
+                    color: Color(0xFFDBDEE1),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
                 ),
               ],
             ),
@@ -296,23 +376,48 @@ class _LobbyScreenState extends State<LobbyScreen> {
             children: [
               const Text(
                 '참석자:',
-                style: TextStyle(color: Color(0xFF949BA4), fontSize: 12, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Color(0xFF949BA4),
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               ...schedule.confirmedMembers.map(
                 (m) => Chip(
-                  backgroundColor: const Color(0xFF23A55A).withValues(alpha: 0.2),
+                  backgroundColor: const Color(
+                    0xFF23A55A,
+                  ).withValues(alpha: 0.2),
                   side: const BorderSide(color: Color(0xFF23A55A)),
-                  avatar: const Icon(Icons.check, size: 14, color: Color(0xFF23A55A)),
-                  label: Text(m, style: const TextStyle(color: Colors.white, fontSize: 11)),
+                  avatar: const Icon(
+                    Icons.check,
+                    size: 14,
+                    color: Color(0xFF23A55A),
+                  ),
+                  label: Text(
+                    m,
+                    style: const TextStyle(color: Colors.white, fontSize: 11),
+                  ),
                   visualDensity: VisualDensity.compact,
                 ),
               ),
               ...schedule.pendingMembers.map(
                 (m) => Chip(
-                  backgroundColor: const Color(0xFF4E5058).withValues(alpha: 0.3),
+                  backgroundColor: const Color(
+                    0xFF4E5058,
+                  ).withValues(alpha: 0.3),
                   side: const BorderSide(color: Color(0xFF4E5058)),
-                  avatar: const Icon(Icons.hourglass_empty, size: 14, color: Color(0xFF949BA4)),
-                  label: Text(m, style: const TextStyle(color: Color(0xFF949BA4), fontSize: 11)),
+                  avatar: const Icon(
+                    Icons.hourglass_empty,
+                    size: 14,
+                    color: Color(0xFF949BA4),
+                  ),
+                  label: Text(
+                    m,
+                    style: const TextStyle(
+                      color: Color(0xFF949BA4),
+                      fontSize: 11,
+                    ),
+                  ),
                   visualDensity: VisualDensity.compact,
                 ),
               ),
@@ -330,10 +435,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   side: const BorderSide(color: Color(0xFF4E5058)),
                 ),
                 onPressed: () {
+                  final myTag = _getMyMemberName();
                   setState(() {
-                    schedule.confirmedMembers.remove('의진 (나)');
-                    if (!schedule.pendingMembers.contains('의진 (나)')) {
-                      schedule.pendingMembers.add('의진 (나)');
+                    schedule.confirmedMembers.remove(myTag);
+                    if (!schedule.pendingMembers.contains(myTag)) {
+                      schedule.pendingMembers.add(myTag);
                     }
                   });
                 },
@@ -347,10 +453,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   foregroundColor: Colors.white,
                 ),
                 onPressed: () {
+                  final myTag = _getMyMemberName();
                   setState(() {
-                    schedule.pendingMembers.remove('의진 (나)');
-                    if (!schedule.confirmedMembers.contains('의진 (나)')) {
-                      schedule.confirmedMembers.add('의진 (나)');
+                    schedule.pendingMembers.remove(myTag);
+                    if (!schedule.confirmedMembers.contains(myTag)) {
+                      schedule.confirmedMembers.add(myTag);
                     }
                   });
                 },
