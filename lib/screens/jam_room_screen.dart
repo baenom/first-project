@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/audio_engine.dart';
+import '../services/upnp_service.dart';
 
 class PeerState {
   final int userId;
@@ -29,7 +30,13 @@ class JamRoomScreen extends StatefulWidget {
   final bool isJamming;
   final VoidCallback onOpenSettings;
   final String? roomName;
+  final int roomId;
   final bool isHost;
+  final String hostName;
+  final String hostPublicIp;
+  final String hostTailscaleIp;
+  final String hostLanIp;
+  final int port;
 
   const JamRoomScreen({
     super.key,
@@ -37,8 +44,17 @@ class JamRoomScreen extends StatefulWidget {
     required this.isJamming,
     required this.onOpenSettings,
     this.roomName,
+    this.roomId = 1,
     this.isHost = true,
+    this.hostName = '방장',
+    this.hostPublicIp = '',
+    this.hostTailscaleIp = '',
+    this.hostLanIp = '',
+    this.port = 9999,
   });
+
+  String get effectivePublicIp =>
+      hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp;
 
   @override
   State<JamRoomScreen> createState() => _JamRoomScreenState();
@@ -46,7 +62,9 @@ class JamRoomScreen extends StatefulWidget {
 
 class _JamRoomScreenState extends State<JamRoomScreen> {
   final AudioEngine _audioEngine = AudioEngine();
+  final UpnpService _upnpService = UpnpService();
   late final List<PeerState> _peers;
+  bool _isUpnpLoading = false;
   Map<String, String> _hostIps = {
     'tailscale': '',
     'lan': '',
@@ -80,6 +98,42 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
       ),
     ];
     _loadHostIps();
+    if (widget.isHost) {
+      if (!_audioEngine.isSfuServerRunning) {
+        _audioEngine.startHostSfu(port: widget.port);
+      }
+      _triggerUpnp();
+    }
+  }
+
+  Future<void> _triggerUpnp() async {
+    if (!widget.isHost) return;
+    setState(() {
+      _isUpnpLoading = true;
+    });
+    await _upnpService.openPort(port: widget.port);
+    if (mounted) {
+      setState(() {
+        _isUpnpLoading = false;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(JamRoomScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isHost != oldWidget.isHost || widget.roomId != oldWidget.roomId) {
+      if (widget.isHost) {
+        if (!_audioEngine.isSfuServerRunning) {
+          _audioEngine.startHostSfu(port: widget.port);
+        }
+        _triggerUpnp();
+      } else {
+        if (_audioEngine.isSfuServerRunning) {
+          _audioEngine.stopHostSfu();
+        }
+      }
+    }
   }
 
   Future<void> _loadHostIps() async {
@@ -96,8 +150,6 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     return ListenableBuilder(
       listenable: _audioEngine,
       builder: (context, _) {
-        final showHostCard = widget.isHost || _audioEngine.isSfuServerRunning;
-
         return SingleChildScrollView(
           padding: const EdgeInsets.all(20.0),
           child: Column(
@@ -105,10 +157,11 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             children: [
               // 1. 상단 세션 헤더 & 제어 바
               _buildTopSessionBar(),
-              if (showHostCard) ...[
-                const SizedBox(height: 14),
-                _buildHostControlCard(),
-              ],
+              const SizedBox(height: 14),
+              if (widget.isHost)
+                _buildHostControlCard()
+              else
+                _buildGuestControlCard(),
               const SizedBox(height: 16),
 
               // 2. 실시간 상태 및 버퍼/레이턴시 모니터 바
@@ -125,10 +178,15 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   }
 
   Widget _buildHostControlCard() {
-    final tailscale = _hostIps['tailscale'] ?? '';
-    final lan = _hostIps['lan'] ?? '';
+    final publicIp = _upnpService.publicIp.isNotEmpty
+        ? _upnpService.publicIp
+        : widget.effectivePublicIp;
+    final lan = _upnpService.localLanIp.isNotEmpty
+        ? _upnpService.localLanIp
+        : (_hostIps['lan'] ?? widget.hostLanIp);
     final port = _audioEngine.sfuServerPort;
     final isRunning = _audioEngine.isSfuServerRunning;
+    final isUpnpMapped = _upnpService.isPortMapped;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -165,18 +223,13 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                       color: const Color(0xFFFEE75C).withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '내가 이 방의 SFU 호스트 (방장)',
-                          style: TextStyle(
-                            color: Color(0xFFFEE75C),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                    child: const Text(
+                      '내가 이 방의 SFU 호스트 (방장)',
+                      style: TextStyle(
+                        color: Color(0xFFFEE75C),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                   Container(
@@ -219,21 +272,82 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                       ],
                     ),
                   ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isUpnpMapped
+                          ? const Color(0xFF23A55A).withValues(alpha: 0.15)
+                          : const Color(0xFFFEE75C).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isUpnpMapped ? Icons.router : Icons.info_outline,
+                          size: 13,
+                          color: isUpnpMapped
+                              ? const Color(0xFF23A55A)
+                              : const Color(0xFFFEE75C),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          isUpnpMapped
+                              ? '공유기 UPnP 포트 개방 완료'
+                              : '공인 IP 직결 (UPnP 포워딩 준비)',
+                          style: TextStyle(
+                            color: isUpnpMapped
+                                ? const Color(0xFF23A55A)
+                                : const Color(0xFFFEE75C),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (isRunning) ...[
-                    Text(
-                      '접속 중인 피어: ${_audioEngine.sfuServerPeerCount}명',
-                      style: const TextStyle(
-                        color: Color(0xFF949BA4),
-                        fontSize: 12,
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isRunning
+                          ? const Color(0xFFDA373C)
+                          : const Color(0xFF23A55A),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                  ],
+                    onPressed: () {
+                      if (isRunning) {
+                        _audioEngine.stopHostSfu();
+                      } else {
+                        _audioEngine.startHostSfu(port: widget.port);
+                      }
+                    },
+                    icon: Icon(
+                      isRunning ? Icons.stop : Icons.play_arrow,
+                      size: 15,
+                    ),
+                    label: Text(
+                      isRunning ? '서버 중지' : 'SFU 서버 가동하기',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   TextButton.icon(
                     style: TextButton.styleFrom(
                       foregroundColor: const Color(0xFF5865F2),
@@ -242,10 +356,16 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                         vertical: 6,
                       ),
                     ),
-                    onPressed: _loadHostIps,
-                    icon: const Icon(Icons.refresh, size: 16),
+                    onPressed: _isUpnpLoading ? null : _triggerUpnp,
+                    icon: _isUpnpLoading
+                        ? const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.sync, size: 16),
                     label: const Text(
-                      'IP 새로고침',
+                      'UPnP 포트 다시 열기',
                       style: TextStyle(fontSize: 12),
                     ),
                   ),
@@ -259,15 +379,15 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             runSpacing: 10,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              // Tailscale IP Chip
+              // 공인 IP Chip (UPnP)
               _buildIpChip(
-                label: 'Tailscale 원격 접속 IP (친구 전달용)',
-                ip: tailscale.isNotEmpty
-                    ? '$tailscale:$port'
-                    : 'Tailscale 미감지 (앱 켜기)',
-                icon: Icons.vpn_lock,
+                label: '공인 IP (친구 전달용 - UPnP 자동 개방)',
+                ip: publicIp.isNotEmpty
+                    ? '$publicIp:$port'
+                    : '공인 IP 확인 중...',
+                icon: Icons.language,
                 isPrimary: true,
-                copyValue: tailscale.isNotEmpty ? tailscale : '',
+                copyValue: publicIp.isNotEmpty ? publicIp : '',
               ),
               // LAN IP Chip
               _buildIpChip(
@@ -291,15 +411,15 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   ),
                 ),
                 onPressed: () {
-                  final bestIp = tailscale.isNotEmpty
-                      ? tailscale
+                  final bestIp = publicIp.isNotEmpty
+                      ? publicIp
                       : (lan.isNotEmpty ? lan : '127.0.0.1');
                   final inviteText =
-                      '🎵 [${widget.roomName ?? '합주실'}] 온라인 합주 초대 안내\n'
+                      '[${widget.roomName ?? '합주실'}] 온라인 합주 초대 안내\n'
                       '• 방 번호: #${_audioEngine.roomId}\n'
-                      '• SFU 서버 IP: $bestIp\n'
+                      '• SFU 서버 공인 IP: $bestIp\n'
                       '• UDP 포트: $port\n'
-                      '※ Tailscale 실행 후 앱 상단 설정(오인페/NAS)에서 위 정보를 입력하고 참여하세요!';
+                      '※ 공유기 UPnP로 포트가 자동 개방되어 가상회선 없이 원클릭으로 바로 접속할 수 있습니다!';
                   Clipboard.setData(ClipboardData(text: inviteText));
                   ScaffoldMessenger.of(context).hideCurrentSnackBar();
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -316,6 +436,127 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                 ),
               ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGuestControlCard() {
+    final hostPublic = widget.effectivePublicIp;
+    final hostLan = widget.hostLanIp;
+    final port = widget.port;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1F22),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFF5865F2).withValues(alpha: 0.5),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF5865F2).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '게스트 접속 모드 (방장: ${widget.hostName})',
+                      style: const TextStyle(
+                        color: Color(0xFF5865F2),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF23A55A).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xFF23A55A),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'SFU 타겟: ${_audioEngine.sfuIp}:${_audioEngine.sfuPort}',
+                          style: const TextStyle(
+                            color: Color(0xFF23A55A),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF949BA4),
+                  side: const BorderSide(color: Color(0xFF4E5058)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                ),
+                onPressed: widget.onOpenSettings,
+                icon: const Icon(Icons.settings, size: 14),
+                label: const Text('연결 IP 설정', style: TextStyle(fontSize: 11)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _buildIpChip(
+                label: '방장의 공인 IP (UPnP 공유기 직결)',
+                ip: hostPublic.isNotEmpty
+                    ? '$hostPublic:$port'
+                    : '방장 공인 IP 미등록 (설정 확인)',
+                icon: Icons.language,
+                isPrimary: true,
+                copyValue: hostPublic,
+              ),
+              if (hostLan.isNotEmpty)
+                _buildIpChip(
+                  label: '방장의 로컬 LAN IP (동일 Wi-Fi)',
+                  ip: '$hostLan:$port',
+                  icon: Icons.wifi,
+                  isPrimary: false,
+                  copyValue: hostLan,
+                ),
             ],
           ),
         ],
@@ -722,7 +963,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            widget.isJamming ? '● UDP 신호 대기 중...' : '○ 오프라인',
+            widget.isJamming ? 'UDP 신호 대기 중...' : '오프라인',
             style: TextStyle(
               color: widget.isJamming
                   ? const Color(0xFF23A55A)

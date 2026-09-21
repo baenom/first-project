@@ -4,7 +4,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class ChatView extends StatefulWidget {
-  const ChatView({super.key});
+  final String roomId;
+  final String roomName;
+
+  const ChatView({
+    super.key,
+    this.roomId = '1',
+    this.roomName = '우리들만의 합주실',
+  });
 
   @override
   State<ChatView> createState() => _ChatViewState();
@@ -59,8 +66,11 @@ class _ChatViewState extends State<ChatView> {
       }
       final user = _currentUser;
       final senderName = _getSenderName(user);
-
-      await FirebaseFirestore.instance.collection('chats').add({
+      await FirebaseFirestore.instance
+          .collection('jam_rooms')
+          .doc(widget.roomId)
+          .collection('chats')
+          .add({
         'text': text,
         'sender': senderName,
         'senderEmail': user?.email ?? '',
@@ -132,15 +142,15 @@ class _ChatViewState extends State<ChatView> {
             border: Border(bottom: BorderSide(color: Color(0xFF1F2023))),
           ),
           child: Row(
-            children: const [
-              Icon(Icons.tag, color: Color(0xFF80848E), size: 20),
-              SizedBox(width: 8),
+            children: [
+              const Icon(Icons.tag, color: Color(0xFF80848E), size: 20),
+              const SizedBox(width: 8),
               Text(
-                '채팅 및 링크 공유',
-                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+                '${widget.roomName} 합주실 채팅',
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
               ),
-              SizedBox(width: 12),
-              Text(
+              const SizedBox(width: 12),
+              const Text(
                 '|  합주곡 악보, 코드 진행, 유튜브 링크를 공유하세요',
                 style: TextStyle(color: Color(0xFF80848E), fontSize: 12),
               ),
@@ -154,9 +164,11 @@ class _ChatViewState extends State<ChatView> {
               ? _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true)
               : StreamBuilder<QuerySnapshot>(
                   stream: FirebaseFirestore.instance
+                      .collection('jam_rooms')
+                      .doc(widget.roomId)
                       .collection('chats')
-                      .orderBy('timestamp', descending: true)
-                      .limit(50)
+                      .orderBy('createdAt', descending: true)
+                      .limit(60)
                       .snapshots(),
                   builder: (context, snapshot) {
               if (snapshot.hasError) {

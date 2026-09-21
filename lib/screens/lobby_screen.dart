@@ -21,7 +21,14 @@ class JamScheduleItem {
 }
 
 class LobbyScreen extends StatefulWidget {
-  const LobbyScreen({super.key});
+  final String roomId;
+  final String roomName;
+
+  const LobbyScreen({
+    super.key,
+    this.roomId = '1',
+    this.roomName = '우리들만의 합주실',
+  });
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -173,17 +180,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
             children: [
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
+                children: [
                   Text(
-                    '합주 일정 조율 및 투표',
-                    style: TextStyle(
+                    '${widget.roomName} 합주 일정 조율',
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                     ),
                   ),
-                  SizedBox(height: 4),
-                  Text(
+                  const SizedBox(height: 4),
+                  const Text(
                     '친구들과 합주 일정을 잡고 참석 여부를 확인하세요',
                     style: TextStyle(color: Color(0xFF949BA4), fontSize: 13),
                   ),
@@ -347,7 +354,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  '🎸 셋리스트 (합주곡):',
+                  '셋리스트 (합주곡):',
                   style: TextStyle(
                     color: Color(0xFF949BA4),
                     fontSize: 12,

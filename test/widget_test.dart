@@ -2,9 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gam/main.dart';
 import 'package:gam/screens/main_lobby_screen.dart';
+import 'package:gam/screens/jam_room_screen.dart';
 import 'package:gam/services/audio_engine.dart';
+import 'package:gam/services/upnp_service.dart';
 
 void main() {
+  setUpAll(() {
+    UpnpService.mockInTests = true;
+  });
+
+  tearDown(() {
+    final engine = AudioEngine();
+    engine.stop();
+    engine.stopHostSfu();
+    UpnpService().closePort();
+  });
+
   testWidgets('SyncRoomApp boots up with LoginScreen and no overflow', (WidgetTester tester) async {
     await tester.pumpWidget(const SyncRoomApp());
     await tester.pump();
@@ -13,12 +26,6 @@ void main() {
     expect(find.text('합주실 입장'), findsOneWidget);
     expect(find.text('이메일'), findsOneWidget);
     expect(find.text('합주실 로비 접속'), findsOneWidget);
-  });
-
-  tearDown(() {
-    final engine = AudioEngine();
-    engine.stop();
-    engine.stopHostSfu();
   });
 
   test('AudioEngine initialization, configuration and host SFU test', () async {
@@ -157,5 +164,102 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('닉네임(활동명) 변경'), findsNothing);
   });
+
+  testWidgets('JamRoomScreen shows host card and toggle when isHost is true', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+    addTearDown(() => AudioEngine().stopHostSfu());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: JamRoomScreen(
+            roomName: '테스트 합주실',
+            roomId: 10,
+            isHost: true,
+            isJamming: false,
+            onToggleJam: () {},
+            onOpenSettings: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('내가 이 방의 SFU 호스트 (방장)'), findsOneWidget);
+    expect(find.text('공인 IP (친구 전달용 - UPnP 자동 개방)'), findsOneWidget);
+    // Button to toggle server is present
+    expect(find.text('서버 중지'), findsWidgets);
+
+    AudioEngine().stopHostSfu();
+    await tester.pump();
+  });
+
+  testWidgets('JamRoomScreen shows guest card when isHost is false', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: JamRoomScreen(
+            roomName: '친구의 합주실',
+            roomId: 20,
+            isHost: false,
+            hostName: '김철수',
+            hostPublicIp: '112.76.111.30',
+            hostTailscaleIp: '100.10.20.30',
+            hostLanIp: '192.168.0.2',
+            port: 9999,
+            isJamming: false,
+            onToggleJam: () {},
+            onOpenSettings: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('게스트 접속 모드 (방장: 김철수)'), findsOneWidget);
+    expect(find.text('방장의 공인 IP (UPnP 공유기 직결)'), findsOneWidget);
+    expect(find.text('내가 이 방의 SFU 호스트 (방장)'), findsNothing);
+    expect(find.text('SFU 서버 정지됨'), findsNothing);
+  });
+
+  testWidgets('MainLobbyScreen long press on room card triggers delete dialog', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+
+    await tester.pumpWidget(const MaterialApp(home: MainLobbyScreen()));
+    await tester.pump();
+
+    // Navigate to session hub
+    await tester.tap(find.byTooltip('합주 세션 로비 (전체 목록)'));
+    await tester.pumpAndSettle();
+
+    // Find the room card in the session hub
+    final roomCard = find.text('우리들만의 합주실').first;
+    expect(roomCard, findsOneWidget);
+
+    // Long press on the room card
+    await tester.longPress(roomCard);
+    await tester.pumpAndSettle();
+
+    // Verify delete confirmation dialog appears
+    expect(find.text('합주실 삭제'), findsOneWidget);
+    expect(find.text('\'우리들만의 합주실\' 합주실을 삭제하시겠습니까?'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '취소'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, '삭제'), findsOneWidget);
+
+    // Tap cancel
+    await tester.tap(find.widgetWithText(TextButton, '취소'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('합주실 삭제'), findsNothing);
+  });
 }
+
 
