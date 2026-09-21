@@ -12,7 +12,7 @@ add_library(audio_core SHARED
 
 if(WIN32)
     set_target_properties(audio_core PROPERTIES
-        COMPILE_DEFINITIONS "BUILD_DLL;NOMINMAX;_CRT_SECURE_NO_WARNINGS"
+        COMPILE_DEFINITIONS "BUILD_DLL;NOMINMAX;WIN32_LEAN_AND_MEAN;_CRT_SECURE_NO_WARNINGS"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
     target_link_libraries(audio_core ws2_32)

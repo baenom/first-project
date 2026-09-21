@@ -1,3 +1,27 @@
+#ifdef _WIN32
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #include <windows.h>
+    #pragma comment(lib, "ws2_32.lib")
+    typedef int socklen_t;
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+    #define INVALID_SOCKET -1
+    #define SOCKET_ERROR   -1
+    #define closesocket    close
+    typedef int SOCKET;
+#endif
+
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
@@ -12,26 +36,6 @@
 #include <cmath>
 #include <algorithm>
 #include <deque>
-
-#ifdef _WIN32
-    #ifndef NOMINMAX
-        #define NOMINMAX
-    #endif
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-    #pragma comment(lib, "ws2_32.lib")
-    typedef int socklen_t;
-#else
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <arpa/inet.h>
-    #include <unistd.h>
-    #include <fcntl.h>
-    #define INVALID_SOCKET -1
-    #define SOCKET_ERROR   -1
-    #define closesocket    close
-    typedef int SOCKET;
-#endif
 
 #include "audio_core.h"
 #include "protocol.h"
@@ -77,7 +81,7 @@ namespace {
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
-    const size_t MAX_QUEUE_SAMPLES = 48000 * 2 * 0.15; // 최대 150ms 분량만 큐잉 (초저지연 유지)
+    const size_t MAX_QUEUE_SAMPLES = static_cast<size_t>(48000 * 2 * 0.15); // 최대 150ms 분량만 큐잉 (초저지연 유지)
 
     uint64_t get_time_us() {
         return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -137,7 +141,7 @@ namespace {
                 std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
                 std::memcpy(packet.data() + sizeof(AudioPacketHeader), processed_pcm.data(), audio_header.payload_bytes);
 
-                sendto(g_sockfd, (const char*)packet.data(), packet.size(), 0,
+                sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
                        (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
                 g_tx_packets++;
             }
