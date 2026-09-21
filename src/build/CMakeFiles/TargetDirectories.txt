@@ -1,3 +1,0 @@
-/Users/baeuijin/gam/src/build/CMakeFiles/audio_core.dir
-/Users/baeuijin/gam/src/build/CMakeFiles/edit_cache.dir
-/Users/baeuijin/gam/src/build/CMakeFiles/rebuild_cache.dir

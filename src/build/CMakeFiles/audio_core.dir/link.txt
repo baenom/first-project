@@ -1,1 +1,0 @@
-/usr/bin/c++  -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libaudio_core.dylib -install_name @rpath/libaudio_core.dylib CMakeFiles/audio_core.dir/audio_core.cpp.o  -lpthread

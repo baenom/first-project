@@ -21,8 +21,9 @@ jobs:
       - name: Build C++ audio_core.dll
         shell: pwsh
         run: |
+          if (Test-Path "src/build") { Remove-Item -Recurse -Force "src/build" }
           cmake -B src/build -S src -DCMAKE_BUILD_TYPE=Release
-          cmake --build src/build --config Release
+          cmake --build src/build --config Release --verbose
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -31,7 +32,9 @@ jobs:
           cache: true
 
       - name: Install Flutter Dependencies
-        run: flutter pub get
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
 
       - name: Build Flutter Windows App
         run: flutter build windows --release
@@ -39,13 +42,30 @@ jobs:
       - name: Package Windows Release with DLLs
         shell: pwsh
         run: |
-          if (Test-Path "src/build/Release/audio_core.dll") {
-            Copy-Item "src/build/Release/audio_core.dll" -Destination "build/windows/x64/runner/Release/" -Force
+          $exe = Get-ChildItem -Path "build" -Filter "gam.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "gam.exe was not found in build folder!"
+            exit 1
           }
-          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "gam-windows-x64.zip" -Force
+          $releaseDir = $exe.DirectoryName
+          Write-Host "Found release directory: $releaseDir"
+
+          $dll = Get-ChildItem -Path "src" -Filter "audio_core.dll" -Recurse | Select-Object -First 1
+          if ($dll) {
+            Copy-Item $dll.FullName -Destination $releaseDir -Force
+            Write-Host "Copied $($dll.FullName) to $releaseDir"
+          } else {
+            Write-Error "audio_core.dll was not found!"
+            exit 1
+          }
+
+          Get-ChildItem -Path $releaseDir
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath "gam-windows-x64.zip" -Force
+          Write-Host "gam-windows-x64.zip created successfully."
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: gam-windows-x64
           path: gam-windows-x64.zip
+
