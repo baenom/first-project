@@ -27,6 +27,11 @@ typedef GetStatsNative = ffi.Void Function(
 typedef GetStatsDart = void Function(
     ffi.Pointer<ffi.Float>, ffi.Pointer<ffi.Float>, ffi.Pointer<ffi.Float>);
 
+typedef GetNetworkStatsNative = ffi.Void Function(
+    ffi.Pointer<ffi.Uint32>, ffi.Pointer<ffi.Uint32>, ffi.Pointer<ffi.Int32>);
+typedef GetNetworkStatsDart = void Function(
+    ffi.Pointer<ffi.Uint32>, ffi.Pointer<ffi.Uint32>, ffi.Pointer<ffi.Int32>);
+
 typedef IsRunningNative = ffi.Int32 Function();
 typedef IsRunningDart = int Function();
 
@@ -70,6 +75,7 @@ class AudioEngine extends ChangeNotifier {
   SetVolumeDart? _setChannelVolume;
   SetGainDart? _setInputGain;
   GetStatsDart? _getAudioStats;
+  GetNetworkStatsDart? _getNetworkStats;
   IsRunningDart? _isRunning;
 
   // 내장 SFU 서버 바인딩
@@ -110,6 +116,24 @@ class AudioEngine extends ChangeNotifier {
   int _userId = 101;
   int get userId => _userId;
 
+  void assignUniqueUserId([String? seed]) {
+    if (seed != null && seed.isNotEmpty) {
+      _userId = (seed.hashCode.abs() % 65000) + 100;
+    } else {
+      _userId = (DateTime.now().millisecondsSinceEpoch % 65000) + 100;
+    }
+  }
+
+  // 네트워크 진단 지표
+  int _txPackets = 0;
+  int get txPackets => _txPackets;
+
+  int _rxPackets = 0;
+  int get rxPackets => _rxPackets;
+
+  int _remotePeersCount = 0;
+  int get remotePeersCount => _remotePeersCount;
+
   double _currentRtt = 4.2; // ms (초기값 서울-경기 평균 핑)
   double get currentRtt => _currentRtt;
 
@@ -124,6 +148,7 @@ class AudioEngine extends ChangeNotifier {
   bool get isNativeRunning => (_isRunning?.call() ?? 0) != 0;
 
   AudioEngine._internal() {
+    assignUniqueUserId();
     _tryLoadNativeLibrary();
   }
 
@@ -203,6 +228,14 @@ class AudioEngine extends ChangeNotifier {
               .asFunction<GetSfuPeerCountDart>();
         } catch (e) {
           debugPrint("[AudioEngine] Embedded SFU symbols optional lookup note: $e");
+        }
+
+        try {
+          _getNetworkStats = _dylib!
+              .lookup<ffi.NativeFunction<GetNetworkStatsNative>>('get_network_stats')
+              .asFunction<GetNetworkStatsDart>();
+        } catch (e) {
+          debugPrint("[AudioEngine] Network stats optional lookup note: $e");
         }
 
         _isNativeLoaded = true;
@@ -405,7 +438,7 @@ class AudioEngine extends ChangeNotifier {
 
   void _startStatsPolling() {
     _statsTimer?.cancel();
-    _statsTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+    _statsTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
       if (!_isStreaming) return;
 
       if (_isNativeLoaded && _getAudioStats != null) {
@@ -419,16 +452,31 @@ class AudioEngine extends ChangeNotifier {
         if (rtt > 0.01) {
           _currentRtt = rtt;
         }
-        _inputLevel = inLevelPtr.value;
-        _outputLevel = outLevelPtr.value;
+        _inputLevel = inLevelPtr.value.clamp(0.0, 1.0);
+        _outputLevel = outLevelPtr.value.clamp(0.0, 1.0);
 
         calloc.free(rttPtr);
         calloc.free(inLevelPtr);
         calloc.free(outLevelPtr);
+
+        if (_getNetworkStats != null) {
+          final txPtr = calloc<ffi.Uint32>();
+          final rxPtr = calloc<ffi.Uint32>();
+          final peersPtr = calloc<ffi.Int32>();
+
+          _getNetworkStats!(txPtr, rxPtr, peersPtr);
+          _txPackets = txPtr.value;
+          _rxPackets = rxPtr.value;
+          _remotePeersCount = peersPtr.value;
+
+          calloc.free(txPtr);
+          calloc.free(rxPtr);
+          calloc.free(peersPtr);
+        }
       } else {
-        // 시뮬레이션 모드 (네이티브 미로딩 시 UI 레벨 미터 활성화)
-        _inputLevel = (_inputLevel + 0.12) % 0.8;
-        _outputLevel = (_outputLevel + 0.08) % 0.7;
+        // 실제 마이크 미연동 시 0 레벨 유지 (가짜 널뛰기 방지)
+        _inputLevel = 0.0;
+        _outputLevel = 0.0;
       }
       notifyListeners();
     });

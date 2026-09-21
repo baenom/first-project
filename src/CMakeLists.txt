@@ -16,8 +16,16 @@ if(WIN32)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
     target_link_libraries(audio_core ws2_32)
+elseif(APPLE)
+    find_library(COREAUDIO_LIB CoreAudio REQUIRED)
+    find_library(AUDIOTOOLBOX_LIB AudioToolbox REQUIRED)
+    find_library(COREFOUNDATION_LIB CoreFoundation REQUIRED)
+    target_link_libraries(audio_core ${COREAUDIO_LIB} ${AUDIOTOOLBOX_LIB} ${COREFOUNDATION_LIB} pthread)
+    set_target_properties(audio_core PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
 else()
-    target_link_libraries(audio_core pthread)
+    target_link_libraries(audio_core pthread dl m)
     set_target_properties(audio_core PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )

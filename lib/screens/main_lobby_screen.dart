@@ -136,7 +136,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   @override
   void initState() {
     super.initState();
-    // 48kHz, 버퍼 128 (약 2.67ms) 기본 초기화
+    final currentUid = Firebase.apps.isNotEmpty
+        ? (FirebaseAuth.instance.currentUser?.uid ?? '')
+        : '';
+    _audioEngine.assignUniqueUserId(currentUid);
     _audioEngine.initialize(48000, 128);
     _listenToRooms();
     if (_currentRoom.isHost) {
@@ -733,14 +736,26 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     } else {
       _audioEngine.stopHostSfu();
       String targetIp = '';
-      if (preferLan && room.hostLanIp.isNotEmpty) {
+      final myLan = UpnpService().localLanIp;
+      bool isSameSubnet = false;
+      if (myLan.isNotEmpty && room.hostLanIp.isNotEmpty) {
+        final myParts = myLan.split('.');
+        final hostParts = room.hostLanIp.split('.');
+        if (myParts.length == 4 && hostParts.length == 4) {
+          isSameSubnet = (myParts[0] == hostParts[0] &&
+              myParts[1] == hostParts[1] &&
+              myParts[2] == hostParts[2]);
+        }
+      }
+
+      if ((preferLan || isSameSubnet) && room.hostLanIp.isNotEmpty) {
         targetIp = room.hostLanIp;
       } else if (room.hostPublicIp.isNotEmpty) {
         targetIp = room.hostPublicIp;
-      } else if (room.hostTailscaleIp.isNotEmpty) {
-        targetIp = room.hostTailscaleIp;
       } else if (room.hostLanIp.isNotEmpty) {
         targetIp = room.hostLanIp;
+      } else if (room.hostTailscaleIp.isNotEmpty) {
+        targetIp = room.hostTailscaleIp;
       } else {
         targetIp = room.remoteIp.isNotEmpty
             ? room.remoteIp
@@ -1998,6 +2013,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
         return JamRoomScreen(
           roomName: _currentRoom.name,
           roomId: _currentRoom.roomId,
+          roomDocId: _currentRoom.id,
           isHost: _currentRoom.isHost,
           hostName: _currentRoom.hostName,
           hostPublicIp: _currentRoom.hostPublicIp,

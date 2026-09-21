@@ -1,3 +1,6 @@
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
+
 #include <iostream>
 #include <vector>
 #include <unordered_map>
@@ -8,6 +11,7 @@
 #include <mutex>
 #include <cmath>
 #include <algorithm>
+#include <deque>
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -53,21 +57,132 @@ namespace {
     std::atomic<float> g_out_level{0.0f};
     std::atomic<float> g_current_rtt_ms{0.0f};
 
-    // 네트워크
+    // 네트워크 진단 지표
+    std::atomic<uint32_t> g_tx_packets{0};
+    std::atomic<uint32_t> g_rx_packets{0};
+    std::atomic<uint32_t> g_sequence_counter{0};
+    std::mutex g_remote_peers_mutex;
+    std::unordered_map<uint16_t, std::chrono::steady_clock::time_point> g_remote_peers;
+
+    // 네트워크 소켓 및 스레드
     SOCKET g_sockfd = INVALID_SOCKET;
     sockaddr_in g_sfu_addr{};
     std::thread g_network_thread;
-    std::thread g_audio_io_thread;
-    std::atomic<uint32_t> g_sequence_counter{0};
+    std::thread g_ping_thread;
+
+    // 하드웨어 오디오 디바이스 (miniaudio)
+    ma_device g_ma_device;
+    std::atomic<bool> g_ma_device_initialized{false};
+
+    // 수신 오디오 지터 큐 (Thread-safe)
+    std::mutex g_jitter_mutex;
+    std::deque<int16_t> g_playback_queue;
+    const size_t MAX_QUEUE_SAMPLES = 48000 * 2 * 0.15; // 최대 150ms 분량만 큐잉 (초저지연 유지)
 
     uint64_t get_time_us() {
         return std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now().time_since_epoch()
         ).count();
     }
+
+    // miniaudio Duplex 콜백 (마이크 입력 + 스피커 출력 동시 처리)
+    void audio_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+        ma_uint32 total_samples = frameCount * pDevice->capture.channels;
+
+        // 1. 마이크 입력 처리 (Capture)
+        if (pInput != nullptr && g_running.load()) {
+            const int16_t* in_pcm = reinterpret_cast<const int16_t*>(pInput);
+            float gain = g_input_gain.load();
+
+            std::vector<int16_t> processed_pcm(total_samples);
+            double sum_sq = 0.0;
+
+            for (ma_uint32 i = 0; i < total_samples; ++i) {
+                float sample = in_pcm[i] * gain;
+                if (sample > 32767.0f) sample = 32767.0f;
+                if (sample < -32768.0f) sample = -32768.0f;
+                int16_t s_int = static_cast<int16_t>(sample);
+                processed_pcm[i] = s_int;
+
+                float norm = s_int / 32768.0f;
+                sum_sq += (norm * norm);
+            }
+
+            // 실제 RMS 입력 게인 레벨 계산
+            float rms = std::sqrt(sum_sq / (total_samples > 0 ? total_samples : 1));
+            float target_level = std::clamp(rms * 4.5f, 0.0f, 1.0f);
+            float current = g_in_level.load();
+            if (target_level > current) {
+                g_in_level.store(target_level);
+            } else {
+                g_in_level.store(current * 0.82f + target_level * 0.18f);
+            }
+
+            // UDP 오디오 패킷 생성 및 SFU 전송
+            if (g_sockfd != INVALID_SOCKET) {
+                AudioPacketHeader audio_header{};
+                audio_header.magic = SYNC_MAGIC;
+                audio_header.packet_type = PACKET_TYPE_AUDIO;
+                audio_header.room_id = g_room_id;
+                audio_header.user_id = g_user_id;
+                audio_header.sequence_num = ++g_sequence_counter;
+                audio_header.timestamp_us = get_time_us();
+                audio_header.sample_rate = static_cast<uint16_t>(g_sample_rate);
+                audio_header.channels = static_cast<uint8_t>(pDevice->capture.channels);
+                audio_header.bits_per_sample = 16;
+                audio_header.frame_count = static_cast<uint16_t>(frameCount);
+                audio_header.payload_bytes = static_cast<uint16_t>(total_samples * sizeof(int16_t));
+
+                std::vector<uint8_t> packet(sizeof(AudioPacketHeader) + audio_header.payload_bytes);
+                std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
+                std::memcpy(packet.data() + sizeof(AudioPacketHeader), processed_pcm.data(), audio_header.payload_bytes);
+
+                sendto(g_sockfd, (const char*)packet.data(), packet.size(), 0,
+                       (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+                g_tx_packets++;
+            }
+        } else {
+            // 마이크가 비활성 상태일 때 감쇄
+            g_in_level.store(g_in_level.load() * 0.75f);
+        }
+
+        // 2. 스피커 출력 처리 (Playback)
+        if (pOutput != nullptr) {
+            int16_t* out_pcm = reinterpret_cast<int16_t*>(pOutput);
+            std::memset(out_pcm, 0, total_samples * sizeof(int16_t));
+
+            if (g_running.load()) {
+                std::lock_guard<std::mutex> lock(g_jitter_mutex);
+                size_t available = g_playback_queue.size();
+                size_t to_read = std::min(static_cast<size_t>(total_samples), available);
+
+                for (size_t i = 0; i < to_read; ++i) {
+                    out_pcm[i] = g_playback_queue.front();
+                    g_playback_queue.pop_front();
+                }
+
+                // 출력 RMS 레벨 계산
+                double out_sum_sq = 0.0;
+                for (ma_uint32 i = 0; i < total_samples; ++i) {
+                    float s = out_pcm[i] / 32768.0f;
+                    out_sum_sq += (s * s);
+                }
+                float out_rms = std::sqrt(out_sum_sq / (total_samples > 0 ? total_samples : 1));
+                float target_out = std::clamp(out_rms * 4.5f, 0.0f, 1.0f);
+                float cur_out = g_out_level.load();
+                if (target_out > cur_out) {
+                    g_out_level.store(target_out);
+                } else {
+                    g_out_level.store(cur_out * 0.82f + target_out * 0.18f);
+                }
+            } else {
+                g_out_level.store(0.0f);
+            }
+        }
+    }
 }
 
-// 백그라운드 UDP 패킷 수신 및 RTT 갱신 루프
+// 백그라운드 UDP 패킷 수신 및 오디오 지터 버퍼링
 void network_receive_loop() {
     uint8_t buffer[4096];
     sockaddr_in from_addr{};
@@ -87,39 +202,54 @@ void network_receive_loop() {
                         g_current_rtt_ms.store(rtt);
                     }
                 } else if (header->packet_type == PACKET_TYPE_AUDIO) {
-                    // 상대방 오디오 패킷 수신: 레벨 미터 계산 및 지터 버퍼 공급
-                    int samples = header->payload_bytes / sizeof(int16_t);
-                    const int16_t* pcm = reinterpret_cast<const int16_t*>(buffer + sizeof(AudioPacketHeader));
-                    
-                    float sum_sq = 0.0f;
-                    for (int i = 0; i < samples; ++i) {
-                        float s = pcm[i] / 32768.0f;
-                        sum_sq += s * s;
+                    // 나 자신의 패킷 에코가 아니라면 상대방 오디오 패킷 수신
+                    if (header->user_id != g_user_id) {
+                        g_rx_packets++;
+
+                        // 활성 피어 갱신
+                        {
+                            std::lock_guard<std::mutex> p_lock(g_remote_peers_mutex);
+                            g_remote_peers[header->user_id] = std::chrono::steady_clock::now();
+                        }
+
+                        int samples = header->payload_bytes / sizeof(int16_t);
+                        const int16_t* pcm = reinterpret_cast<const int16_t*>(buffer + sizeof(AudioPacketHeader));
+
+                        float vol = 1.0f;
+                        {
+                            std::lock_guard<std::mutex> v_lock(g_volume_mutex);
+                            auto it = g_peer_volumes.find(header->user_id);
+                            if (it != g_peer_volumes.end()) {
+                                vol = it->second;
+                            }
+                        }
+
+                        // 지터 큐에 추가
+                        {
+                            std::lock_guard<std::mutex> q_lock(g_jitter_mutex);
+                            for (int i = 0; i < samples; ++i) {
+                                float val = pcm[i] * vol;
+                                if (val > 32767.0f) val = 32767.0f;
+                                if (val < -32768.0f) val = -32768.0f;
+                                g_playback_queue.push_back(static_cast<int16_t>(val));
+                            }
+
+                            // 큐가 너무 커지면 지연시간 최소화를 위해 오래된 샘플 드롭
+                            while (g_playback_queue.size() > MAX_QUEUE_SAMPLES) {
+                                g_playback_queue.pop_front();
+                            }
+                        }
                     }
-                    float rms = std::sqrt(sum_sq / (samples > 0 ? samples : 1));
-                    // 감쇄 적용
-                    g_out_level.store((std::max)(rms * 1.5f, g_out_level.load() * 0.85f));
                 }
             }
         }
     }
 }
 
-// 오디오 I/O 루프 (오인페 캡처 시뮬레이션 및 전송 + 핑)
-void audio_io_loop() {
-    // 128 샘플 주기: 128 / 48000 = 약 2.666 ms
-    auto interval = std::chrono::microseconds(static_cast<int>(1000000.0 * g_buffer_size / g_sample_rate));
-    std::vector<int16_t> pcm_buffer(g_buffer_size * 2, 0); // 스테레오
-
-    auto last_ping = std::chrono::steady_clock::now();
-
+// 500ms 주기 핑 전송 루프 (RTT 측정용)
+void ping_loop() {
     while (g_running) {
-        auto frame_start = std::chrono::steady_clock::now();
-
-        // 1초마다 핑 전송 (RTT 측정)
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_ping).count() >= 1000) {
-            last_ping = now;
+        if (g_sockfd != INVALID_SOCKET) {
             AudioPacketHeader ping_header{};
             ping_header.magic = SYNC_MAGIC;
             ping_header.packet_type = PACKET_TYPE_PING;
@@ -129,37 +259,7 @@ void audio_io_loop() {
             sendto(g_sockfd, (const char*)&ping_header, sizeof(ping_header), 0,
                    (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
         }
-
-        // 오디오 패킷 생성 (무압축 PCM16)
-        AudioPacketHeader audio_header{};
-        audio_header.magic = SYNC_MAGIC;
-        audio_header.packet_type = PACKET_TYPE_AUDIO;
-        audio_header.room_id = g_room_id;
-        audio_header.user_id = g_user_id;
-        audio_header.sequence_num = ++g_sequence_counter;
-        audio_header.timestamp_us = get_time_us();
-        audio_header.sample_rate = static_cast<uint16_t>(g_sample_rate);
-        audio_header.channels = 2;
-        audio_header.bits_per_sample = 16;
-        audio_header.frame_count = static_cast<uint16_t>(g_buffer_size);
-        audio_header.payload_bytes = static_cast<uint16_t>(pcm_buffer.size() * sizeof(int16_t));
-
-        // 패킷 전송용 버퍼 구성
-        std::vector<uint8_t> packet(sizeof(AudioPacketHeader) + audio_header.payload_bytes);
-        std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
-        std::memcpy(packet.data() + sizeof(AudioPacketHeader), pcm_buffer.data(), audio_header.payload_bytes);
-
-        sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
-               (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
-
-        // 입력 레벨 감쇄
-        g_in_level.store((std::max)(0.05f, g_in_level.load() * 0.85f));
-
-        // 정확한 오디오 버퍼 주기 유지 (휴면)
-        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - frame_start);
-        if (elapsed < interval) {
-            std::this_thread::sleep_for(interval - elapsed);
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 }
 
@@ -176,11 +276,33 @@ extern "C" {
         WSADATA wsaData;
         WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif
+
+        // miniaudio 듀플렉스 디바이스 설정
+        if (!g_ma_device_initialized.load()) {
+            ma_device_config config = ma_device_config_init(ma_device_type_duplex);
+            config.capture.format = ma_format_s16;
+            config.capture.channels = 2;
+            config.playback.format = ma_format_s16;
+            config.playback.channels = 2;
+            config.sampleRate = g_sample_rate;
+            config.periodSizeInFrames = g_buffer_size;
+            config.dataCallback = audio_data_callback;
+            config.pUserData = nullptr;
+            config.performanceProfile = ma_performance_profile_low_latency;
+
+            if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
+                g_ma_device_initialized.store(true);
+                std::cout << "[AudioCore] Hardware audio duplex device successfully initialized via miniaudio." << std::endl;
+            } else {
+                std::cerr << "[AudioCore Warning] Failed to initialize hardware audio device." << std::endl;
+            }
+        }
+
         return 0; // Success
     }
 
     EXPORT void set_sfu_endpoint(const char* ip, int port, int room_id, int user_id) {
-        if (ip != nullptr) {
+        if (ip != nullptr && std::strlen(ip) > 0) {
             g_sfu_ip = ip;
         }
         g_sfu_port = port;
@@ -197,7 +319,7 @@ extern "C" {
     }
 
     EXPORT void start_audio_stream() {
-        if (g_running) return;
+        if (g_running.load()) return;
 
         // UDP 소켓 개설
         g_sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -217,7 +339,9 @@ extern "C" {
         setsockopt(g_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 #endif
 
-        g_running = true;
+        g_running.store(true);
+        g_tx_packets.store(0);
+        g_rx_packets.store(0);
 
         // SFU 방 참여 패킷 전송
         AudioPacketHeader join_header{};
@@ -229,17 +353,28 @@ extern "C" {
         sendto(g_sockfd, (const char*)&join_header, sizeof(join_header), 0,
                (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
 
-        // 백그라운드 스레드 시작
+        // 백그라운드 수신 및 핑 스레드 시작
         g_network_thread = std::thread(network_receive_loop);
-        g_audio_io_thread = std::thread(audio_io_loop);
+        g_ping_thread = std::thread(ping_loop);
 
-        std::cout << "[AudioCore] Audio streaming started via UDP to SFU." << std::endl;
+        // 하드웨어 오디오 스트리밍 시작
+        if (g_ma_device_initialized.load()) {
+            ma_device_start(&g_ma_device);
+        }
+
+        std::cout << "[AudioCore] Live audio streaming started via UDP to " << g_sfu_ip << ":" << g_sfu_port 
+                  << " (User ID: " << g_user_id << ")" << std::endl;
     }
 
     EXPORT void stop_audio_stream() {
-        if (!g_running) return;
+        if (!g_running.load()) return;
 
-        g_running = false;
+        g_running.store(false);
+
+        // 하드웨어 오디오 스트리밍 중지
+        if (g_ma_device_initialized.load()) {
+            ma_device_stop(&g_ma_device);
+        }
 
         // 방 퇴장 패킷 전송
         if (g_sockfd != INVALID_SOCKET) {
@@ -257,7 +392,13 @@ extern "C" {
         }
 
         if (g_network_thread.joinable()) g_network_thread.join();
-        if (g_audio_io_thread.joinable()) g_audio_io_thread.join();
+        if (g_ping_thread.joinable()) g_ping_thread.join();
+
+        // 큐 초기화
+        {
+            std::lock_guard<std::mutex> lock(g_jitter_mutex);
+            g_playback_queue.clear();
+        }
 
         g_in_level.store(0.0f);
         g_out_level.store(0.0f);
@@ -279,8 +420,27 @@ extern "C" {
         if (out_out_level) *out_out_level = g_out_level.load();
     }
 
+    EXPORT void get_network_stats(uint32_t* out_tx_packets, uint32_t* out_rx_packets, int* out_active_remote_peers) {
+        if (out_tx_packets) *out_tx_packets = g_tx_packets.load();
+        if (out_rx_packets) *out_rx_packets = g_rx_packets.load();
+        if (out_active_remote_peers) {
+            auto now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lock(g_remote_peers_mutex);
+            int count = 0;
+            for (auto it = g_remote_peers.begin(); it != g_remote_peers.end(); ) {
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count() <= 3) {
+                    count++;
+                    ++it;
+                } else {
+                    it = g_remote_peers.erase(it);
+                }
+            }
+            *out_active_remote_peers = count;
+        }
+    }
+
     EXPORT int is_audio_running() {
-        return g_running ? 1 : 0;
+        return g_running.load() ? 1 : 0;
     }
 
     // 내장 SFU 릴레이 서버 상태 및 스레드
@@ -342,6 +502,7 @@ extern "C" {
                         }
 
                         if (header->packet_type == PACKET_TYPE_AUDIO) {
+                            // 오디오 패킷을 송신자(user_id)를 제외한 모든 방 참가자에게 포워딩
                             for (const auto& peer : peer_list) {
                                 if (peer.user_id != user_id) {
                                     sendto(
@@ -376,85 +537,66 @@ extern "C" {
                     }
                 }
 
-                // 3초마다 타임아웃 세션 정리
+                // 3초마다 비활성 세션 정리 및 피어 통계 갱신
                 if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats_time).count() >= 3) {
                     last_stats_time = now;
                     int total_active_peers = 0;
 
-                    for (auto it = rooms.begin(); it != rooms.end(); ) {
-                        auto& peer_list = it->second;
-                        for (auto p_it = peer_list.begin(); p_it != peer_list.end(); ) {
-                            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - p_it->last_seen).count();
-                            if (elapsed > 5) {
-                                p_it = peer_list.erase(p_it);
+                    for (auto& pair : rooms) {
+                        auto& list = pair.second;
+                        for (auto it = list.begin(); it != list.end(); ) {
+                            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->last_seen).count() > 3) {
+                                std::cout << "[Embedded SFU Room " << pair.first << "] Peer timeout: User " << it->user_id << std::endl;
+                                it = list.erase(it);
                             } else {
-                                ++p_it;
+                                ++total_active_peers;
+                                ++it;
                             }
-                        }
-                        if (peer_list.empty()) {
-                            it = rooms.erase(it);
-                        } else {
-                            total_active_peers += static_cast<int>(peer_list.size());
-                            ++it;
                         }
                     }
                     g_sfu_active_peers.store(total_active_peers);
                 }
             }
-            std::cout << "[Embedded SFU] Loop exited." << std::endl;
         }
     }
 
     EXPORT int start_embedded_sfu(int port) {
-        if (g_sfu_server_running.load()) {
-            std::cout << "[Embedded SFU] Server already running on port " << port << std::endl;
-            return 0;
-        }
-
-#ifdef _WIN32
-        WSADATA wsaData;
-        WSAStartup(MAKEWORD(2, 2), &wsaData);
-#endif
+        if (g_sfu_server_running.load()) return 0;
 
         g_sfu_server_sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (g_sfu_server_sockfd == INVALID_SOCKET) {
-            std::cerr << "[Embedded SFU Error] Failed to create socket" << std::endl;
+            std::cerr << "[Embedded SFU Error] Failed to create UDP socket" << std::endl;
             return -1;
         }
 
-        int opt = 1;
-        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
-#ifndef _WIN32
-        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_REUSEPORT, (const char*)&opt, sizeof(opt));
-#endif
+        // SO_REUSEADDR
+        int reuse = 1;
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
 
-        int buf_size = 1024 * 1024;
-        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVBUF, (const char*)&buf_size, sizeof(buf_size));
-        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_SNDBUF, (const char*)&buf_size, sizeof(buf_size));
+        sockaddr_in bind_addr{};
+        bind_addr.sin_family = AF_INET;
+        bind_addr.sin_addr.s_addr = INADDR_ANY;
+        bind_addr.sin_port = htons(port);
 
-#ifdef _WIN32
-        DWORD timeout_ms = 50;
-        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
-#else
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 50000;
-        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-#endif
-
-        sockaddr_in server_addr{};
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_addr.s_addr = INADDR_ANY;
-        server_addr.sin_port = htons(port);
-
-        if (bind(g_sfu_server_sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
-            std::cerr << "[Embedded SFU Error] Failed to bind to port " << port << std::endl;
+        if (bind(g_sfu_server_sockfd, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) == SOCKET_ERROR) {
+            std::cerr << "[Embedded SFU Error] Failed to bind port " << port << std::endl;
             closesocket(g_sfu_server_sockfd);
             g_sfu_server_sockfd = INVALID_SOCKET;
             return -1;
         }
 
-        g_sfu_server_running = true;
+        // 수신 타임아웃 설정
+#ifdef _WIN32
+        DWORD timeout_ms = 100;
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
+#else
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;
+        setsockopt(g_sfu_server_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#endif
+
+        g_sfu_server_running.store(true);
         g_sfu_server_thread = std::thread(embedded_sfu_loop, port);
         std::cout << "[Embedded SFU] Server started successfully on port " << port << std::endl;
         return 0;
@@ -464,7 +606,7 @@ extern "C" {
         if (!g_sfu_server_running.load()) return;
 
         std::cout << "[Embedded SFU] Stopping server..." << std::endl;
-        g_sfu_server_running = false;
+        g_sfu_server_running.store(false);
 
         if (g_sfu_server_sockfd != INVALID_SOCKET) {
             closesocket(g_sfu_server_sockfd);

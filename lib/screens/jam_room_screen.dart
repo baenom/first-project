@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/audio_engine.dart';
 import '../services/upnp_service.dart';
 
@@ -31,6 +33,7 @@ class JamRoomScreen extends StatefulWidget {
   final VoidCallback onOpenSettings;
   final String? roomName;
   final int roomId;
+  final String? roomDocId;
   final bool isHost;
   final String hostName;
   final String hostPublicIp;
@@ -45,6 +48,7 @@ class JamRoomScreen extends StatefulWidget {
     required this.onOpenSettings,
     this.roomName,
     this.roomId = 1,
+    this.roomDocId,
     this.isHost = true,
     this.hostName = '방장',
     this.hostPublicIp = '',
@@ -64,6 +68,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   final AudioEngine _audioEngine = AudioEngine();
   final UpnpService _upnpService = UpnpService();
   late final List<PeerState> _peers;
+  StreamSubscription<dynamic>? _membersSub;
   bool _isUpnpLoading = false;
   Map<String, String> _hostIps = {
     'tailscale': '',
@@ -94,9 +99,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         userId: _audioEngine.userId,
         name: '${_getMyName()} (나)',
         instrument: '내 악기 / 오디오 인터페이스',
-        audioInterface: 'ASIO / CoreAudio 연결됨',
+        audioInterface: 'CoreAudio / ASIO 연결됨',
       ),
     ];
+    _syncPresence();
     _loadHostIps();
     if (widget.isHost) {
       if (!_audioEngine.isSfuServerRunning) {
@@ -104,6 +110,88 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
       }
       _triggerUpnp();
     }
+  }
+
+  void _syncPresence() {
+    if (Firebase.apps.isEmpty) return;
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final uid = user?.uid ?? 'anon_${_audioEngine.userId}';
+      final docId = widget.roomDocId ?? widget.roomId.toString();
+
+      FirebaseFirestore.instance
+          .collection('jam_rooms')
+          .doc(docId)
+          .collection('members')
+          .doc(uid)
+          .set({
+        'name': _getMyName(),
+        'uid': uid,
+        'userId': _audioEngine.userId,
+        'isHost': widget.isHost,
+        'instrument': widget.isHost ? '방장 (호스트)' : '합주 세션 멤버',
+        'joinedAt': FieldValue.serverTimestamp(),
+      });
+
+      _membersSub = FirebaseFirestore.instance
+          .collection('jam_rooms')
+          .doc(docId)
+          .collection('members')
+          .snapshots()
+          .listen((snapshot) {
+        if (!mounted) return;
+        final newPeers = <PeerState>[];
+        newPeers.add(PeerState(
+          userId: _audioEngine.userId,
+          name: '${_getMyName()} (나)',
+          instrument: '내 악기 / 오디오 인터페이스',
+          audioInterface: 'CoreAudio / ASIO 연결됨',
+        ));
+
+        for (final doc in snapshot.docs) {
+          if (doc.id == uid) continue;
+          final data = doc.data();
+          final peerUserId = (data['userId'] as int?) ?? 102;
+          final name = (data['name'] as String?) ?? '합주자';
+          final instrument = (data['instrument'] as String?) ?? '합주 멤버';
+          newPeers.add(PeerState(
+            userId: peerUserId,
+            name: name,
+            instrument: instrument,
+            audioInterface: '실시간 스트리밍 연결됨',
+          ));
+        }
+
+        setState(() {
+          _peers.clear();
+          _peers.addAll(newPeers);
+        });
+      }, onError: (e) {
+        debugPrint('[JamRoom members sync error] $e');
+      });
+    } catch (e) {
+      debugPrint('[JamRoom presence error] $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _membersSub?.cancel();
+    if (Firebase.apps.isNotEmpty) {
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        final uid = user?.uid ?? 'anon_${_audioEngine.userId}';
+        final docId = widget.roomDocId ?? widget.roomId.toString();
+        FirebaseFirestore.instance
+            .collection('jam_rooms')
+            .doc(docId)
+            .collection('members')
+            .doc(uid)
+            .delete()
+            .catchError((_) {});
+      } catch (_) {}
+    }
+    super.dispose();
   }
 
   Future<void> _triggerUpnp() async {
@@ -548,6 +636,27 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 icon: Icons.language,
                 isPrimary: true,
                 copyValue: hostPublic,
+                onSelect: hostPublic.isNotEmpty
+                    ? () {
+                        _audioEngine.configureSfu(
+                          hostPublic,
+                          port,
+                          widget.roomId,
+                          _audioEngine.userId,
+                        );
+                        setState(() {});
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              '접속 IP가 방장 공인 IP ($hostPublic:$port)로 변경되었습니다.',
+                            ),
+                            backgroundColor: const Color(0xFF23A55A),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    : null,
               ),
               if (hostLan.isNotEmpty)
                 _buildIpChip(
@@ -556,6 +665,25 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   icon: Icons.wifi,
                   isPrimary: false,
                   copyValue: hostLan,
+                  onSelect: () {
+                    _audioEngine.configureSfu(
+                      hostLan,
+                      port,
+                      widget.roomId,
+                      _audioEngine.userId,
+                    );
+                    setState(() {});
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '접속 IP가 로컬 Wi-Fi IP ($hostLan:$port)로 변경되었습니다.',
+                        ),
+                        backgroundColor: const Color(0xFF23A55A),
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  },
                 ),
             ],
           ),
@@ -570,72 +698,107 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     required IconData icon,
     required bool isPrimary,
     required String copyValue,
+    VoidCallback? onSelect,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2B2D31),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isPrimary
-              ? const Color(0xFF5865F2).withValues(alpha: 0.6)
-              : const Color(0xFF383A40),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 16,
-            color: isPrimary
-                ? const Color(0xFF5865F2)
-                : const Color(0xFF949BA4),
+    final bool isSelected = _audioEngine.sfuIp == copyValue && copyValue.isNotEmpty;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onSelect,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFF23A55A).withValues(alpha: 0.15)
+              : const Color(0xFF2B2D31),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFF23A55A)
+                : (isPrimary
+                    ? const Color(0xFF5865F2).withValues(alpha: 0.6)
+                    : const Color(0xFF383A40)),
+            width: isSelected ? 1.8 : 1.0,
           ),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: const TextStyle(color: Color(0xFF949BA4), fontSize: 10),
-              ),
-              Text(
-                ip,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: isPrimary ? FontWeight.bold : FontWeight.normal,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: isSelected
+                  ? const Color(0xFF23A55A)
+                  : (isPrimary ? const Color(0xFF5865F2) : const Color(0xFF949BA4)),
+            ),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: isSelected
+                            ? const Color(0xFF23A55A)
+                            : const Color(0xFF949BA4),
+                        fontSize: 10,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    if (isSelected) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF23A55A),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          '현재 접속 대상',
+                          style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                Text(
+                  ip,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: (isPrimary || isSelected)
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
+            if (copyValue.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              InkWell(
+                borderRadius: BorderRadius.circular(4),
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: copyValue));
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('$label ($copyValue) 복사되었습니다.'),
+                      backgroundColor: const Color(0xFF23A55A),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                },
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.copy, size: 13, color: Color(0xFFB5BAC1)),
                 ),
               ),
             ],
-          ),
-          if (copyValue.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            InkWell(
-              borderRadius: BorderRadius.circular(4),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: copyValue));
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('\'$copyValue\' IP가 복사되었습니다.'),
-                    backgroundColor: const Color(0xFF23A55A),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
-              },
-              child: const Padding(
-                padding: EdgeInsets.all(4.0),
-                child: Icon(
-                  Icons.content_copy,
-                  size: 14,
-                  color: Color(0xFFDBDEE1),
-                ),
-              ),
-            ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -810,35 +973,79 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             ],
           ),
 
-          // 레이턴시 측정 지표
-          Row(
-            mainAxisSize: MainAxisSize.min,
+          // 레이턴시 및 패킷 지표
+          Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Icon(Icons.speed, color: Color(0xFF23A55A), size: 18),
-              const SizedBox(width: 6),
-              Text(
-                'RTT 네트워크: ${_audioEngine.currentRtt.toStringAsFixed(1)}ms',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF23A55A).withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '체감 총 지연: 약 $totalLatency ms (연주 동기화 최적)',
-                  style: const TextStyle(
-                    color: Color(0xFF23A55A),
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.speed, color: Color(0xFF23A55A), size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    'RTT 네트워크: ${_audioEngine.currentRtt.toStringAsFixed(1)}ms',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF23A55A).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '총 지연: 약 $totalLatency ms',
+                      style: const TextStyle(
+                        color: Color(0xFF23A55A),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    widget.isJamming
+                        ? (_audioEngine.rxPackets > 0 || widget.isHost
+                            ? Icons.wifi_tethering
+                            : Icons.sync)
+                        : Icons.wifi_off,
+                    color: widget.isJamming
+                        ? (_audioEngine.rxPackets > 0 || widget.isHost
+                            ? const Color(0xFF57F287)
+                            : const Color(0xFFFEE75C))
+                        : const Color(0xFF949BA4),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.isJamming
+                        ? (widget.isHost
+                            ? 'SFU 가동 중 (송신: ${_audioEngine.txPackets} pkts | 활성 피어: ${_audioEngine.remotePeersCount}명)'
+                            : (_audioEngine.rxPackets > 0
+                                ? '방장 신호 수신 중 (수신: ${_audioEngine.rxPackets} pkts, 송신: ${_audioEngine.txPackets})'
+                                : '방장 신호 대기 중 (송신: ${_audioEngine.txPackets} pkts)'))
+                        : '합주 대기 상태 (송출 시작 필요)',
+                    style: TextStyle(
+                      color: widget.isJamming
+                          ? (_audioEngine.rxPackets > 0 || widget.isHost
+                              ? const Color(0xFF57F287)
+                              : const Color(0xFFFEE75C))
+                          : const Color(0xFF949BA4),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

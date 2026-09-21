@@ -29,6 +29,9 @@ extern "C" {
     // 오디오 실시간 지표 (RTT 핑 ms, 입력 레벨 0~1, 출력 레벨 0~1) 조회
     EXPORT void get_audio_stats(float* out_rtt_ms, float* out_in_level, float* out_out_level);
 
+    // 네트워크 실시간 패킷 지표 (송신 패킷수, 수신 패킷수, 활성 원격 피어수) 조회
+    EXPORT void get_network_stats(uint32_t* out_tx_packets, uint32_t* out_rx_packets, int* out_active_remote_peers);
+
     // 현재 오디오 스트림 실행 여부 확인 (1: 실행중, 0: 중지됨)
     EXPORT int is_audio_running();
 
