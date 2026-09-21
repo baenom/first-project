@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:gam/firebase_options.dart';
 import 'screens/login_screen.dart';
+import 'screens/main_lobby_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,7 +39,39 @@ class SyncRoomApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: const LoginScreen(),
+      home: Builder(
+        builder: (context) {
+          bool isFirebaseInitialized = false;
+          try {
+            isFirebaseInitialized = Firebase.apps.isNotEmpty;
+          } catch (_) {
+            isFirebaseInitialized = false;
+          }
+
+          if (isFirebaseInitialized) {
+            return StreamBuilder<User?>(
+              stream: FirebaseAuth.instance.authStateChanges(),
+              initialData: FirebaseAuth.instance.currentUser,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                  return const Scaffold(
+                    backgroundColor: Color(0xFF1E1F22),
+                    body: Center(
+                      child: CircularProgressIndicator(color: Color(0xFF5865F2)),
+                    ),
+                  );
+                }
+                if (snapshot.hasData && snapshot.data != null) {
+                  return const MainLobbyScreen();
+                }
+                return const LoginScreen();
+              },
+            );
+          }
+
+          return const LoginScreen();
+        },
+      ),
       debugShowCheckedModeBanner: false,
     );
   }

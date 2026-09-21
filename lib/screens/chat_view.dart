@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -12,32 +13,84 @@ class ChatView extends StatefulWidget {
 class _ChatViewState extends State<ChatView> {
   final _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final User? currentUser = FirebaseAuth.instance.currentUser;
 
-  // 로컬 폴백 메시지 목록 (초기화 완료, 새 메시지 전송 시 추가됨)
+  bool get _isFirebaseReady {
+    try {
+      return Firebase.apps.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  User? get _currentUser {
+    try {
+      if (_isFirebaseReady) {
+        return FirebaseAuth.instance.currentUser;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // 로컬 폴백 메시지 목록 (네트워크 단절 시 임시 보관)
   final List<Map<String, dynamic>> _fallbackMessages = [];
+  bool _isSending = false;
 
-  void _sendMessage() async {
+  Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isSending) return;
     _messageController.clear();
 
+    setState(() => _isSending = true);
+
     try {
+      if (!_isFirebaseReady) {
+        throw Exception('Firebase가 초기화되지 않았습니다.');
+      }
+      final user = _currentUser;
+      final senderName = (user?.displayName != null && user!.displayName!.isNotEmpty)
+          ? user.displayName!
+          : (user?.email != null && user!.email!.isNotEmpty
+              ? user.email!.split('@').first
+              : '의진');
+
       await FirebaseFirestore.instance.collection('chats').add({
         'text': text,
-        'sender': currentUser?.email?.split('@').first ?? '의진',
+        'sender': senderName,
+        'senderEmail': user?.email ?? '',
+        'userId': user?.uid ?? 'anonymous',
         'timestamp': FieldValue.serverTimestamp(),
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
       });
-    } catch (e) {
-      // 오프라인 / 로컬 테스트 시 폴백 리스트에 추가
+
+      debugPrint('[Firestore] Message successfully sent: $text');
+    } catch (e, stack) {
+      debugPrint('[Firestore Error] Failed to send message: $e\n$stack');
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.cloud_off, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Firebase 채팅 업로드 실패: $e')),
+              ],
+            ),
+            backgroundColor: const Color(0xFFDA373C),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
       setState(() {
         _fallbackMessages.add({
-          'sender': currentUser?.email?.split('@').first ?? '의진',
+          'sender': _currentUser?.email?.split('@').first ?? '의진',
           'text': text,
-          'time': '방금',
+          'time': '로컬 보관 (업로드 실패)',
           'isMe': true,
         });
       });
+    } finally {
+      if (mounted) setState(() => _isSending = false);
     }
 
     // 하단 스크롤
@@ -90,28 +143,80 @@ class _ChatViewState extends State<ChatView> {
 
         // 메시지 리스트 영역
         Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('chats')
-                .orderBy('timestamp', descending: true)
-                .limit(50)
-                .snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.hasError || !snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                // 폴백 뷰 표시
-                return _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true);
+          child: !_isFirebaseReady
+              ? _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true)
+              : StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('chats')
+                      .orderBy('timestamp', descending: true)
+                      .limit(50)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                debugPrint('[Firestore Chat Error] ${snapshot.error}');
+                return Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      color: const Color(0xFFDA373C).withValues(alpha: 0.2),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.cloud_off, color: Color(0xFFF23F43), size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Firebase 연결 오류: ${snapshot.error}',
+                              style: const TextStyle(color: Color(0xFFF23F43), fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true),
+                    ),
+                  ],
+                );
+              }
+
+              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                return const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF5865F2)),
+                );
+              }
+
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                if (_fallbackMessages.isNotEmpty) {
+                  return _buildMessageListView(_fallbackMessages.reversed.toList(), isFallback: true);
+                }
+                return _buildEmptyState();
               }
 
               final docs = snapshot.data!.docs;
+              final myUser = _currentUser;
               final messages = docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
-                final sender = data['sender'] ?? '알 수 없음';
-                final text = data['text'] ?? '';
-                final isMe = currentUser?.email?.startsWith(sender) ?? (sender == '의진');
+                final sender = (data['sender'] as String?) ?? '익명';
+                final text = (data['text'] as String?) ?? '';
+                final senderEmail = (data['senderEmail'] as String?) ?? '';
+                final userId = (data['userId'] as String?) ?? '';
+
+                final isMe = (myUser != null && (myUser.uid == userId || (myUser.email != null && myUser.email == senderEmail)))
+                    || (myUser == null && sender == '의진');
+
+                String timeStr = '방금';
+                if (data['timestamp'] is Timestamp) {
+                  final dt = (data['timestamp'] as Timestamp).toDate();
+                  timeStr = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                } else if (data['createdAt'] is int) {
+                  final dt = DateTime.fromMillisecondsSinceEpoch(data['createdAt'] as int);
+                  timeStr = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                }
+
                 return {
                   'sender': sender,
                   'text': text,
-                  'time': '실시간',
+                  'time': timeStr,
                   'isMe': isMe,
                 };
               }).toList();
@@ -161,26 +266,30 @@ class _ChatViewState extends State<ChatView> {
     );
   }
 
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: const [
+          Icon(Icons.chat_bubble_outline, size: 48, color: Color(0xFF4E5058)),
+          SizedBox(height: 12),
+          Text(
+            '아직 메시지가 없습니다.',
+            style: TextStyle(color: Color(0xFF949BA4), fontSize: 15, fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: 4),
+          Text(
+            '첫 메시지를 입력하여 친구들과 대화를 시작해보세요!',
+            style: TextStyle(color: Color(0xFF5C5E66), fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMessageListView(List<Map<String, dynamic>> messages, {required bool isFallback}) {
     if (messages.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.chat_bubble_outline, size: 48, color: Color(0xFF4E5058)),
-            SizedBox(height: 12),
-            Text(
-              '아직 메시지가 없습니다.',
-              style: TextStyle(color: Color(0xFF949BA4), fontSize: 15, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 4),
-            Text(
-              '첫 메시지를 입력하여 친구들과 대화를 시작해보세요!',
-              style: TextStyle(color: Color(0xFF5C5E66), fontSize: 13),
-            ),
-          ],
-        ),
-      );
+      return _buildEmptyState();
     }
     return ListView.builder(
       controller: _scrollController,

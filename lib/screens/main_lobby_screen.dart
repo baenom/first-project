@@ -1,8 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/audio_engine.dart';
 import 'jam_room_screen.dart';
 import 'chat_view.dart';
 import 'lobby_screen.dart';
+import 'login_screen.dart';
+
+class JamRoom {
+  final String id;
+  final String name;
+  final int roomId;
+  final IconData icon;
+  final String description;
+
+  JamRoom({
+    required this.id,
+    required this.name,
+    required this.roomId,
+    this.icon = Icons.music_note,
+    this.description = '',
+  });
+}
 
 class MainLobbyScreen extends StatefulWidget {
   const MainLobbyScreen({super.key});
@@ -14,6 +33,22 @@ class MainLobbyScreen extends StatefulWidget {
 class _MainLobbyScreenState extends State<MainLobbyScreen> {
   final AudioEngine _audioEngine = AudioEngine();
   int _selectedChannel = 0; // 0: 합주실, 1: 채팅, 2: 일정 조율
+
+  int _selectedRoomIndex = 0;
+  final List<JamRoom> _rooms = [
+    JamRoom(
+      id: '1',
+      name: '우리들만의 합주실',
+      roomId: 1,
+      icon: Icons.music_note,
+      description: '메인 밴드 정기 합주 공간',
+    ),
+  ];
+
+  JamRoom get _currentRoom =>
+      _rooms.isNotEmpty && _selectedRoomIndex < _rooms.length
+          ? _rooms[_selectedRoomIndex]
+          : JamRoom(id: '1', name: '우리들만의 합주실', roomId: 1);
 
   @override
   void initState() {
@@ -218,6 +253,354 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     );
   }
 
+  void _selectRoom(int index) {
+    if (index < 0 || index >= _rooms.length) return;
+    setState(() {
+      _selectedRoomIndex = index;
+    });
+
+    final room = _rooms[index];
+    _audioEngine.configureSfu(
+      _audioEngine.sfuIp,
+      _audioEngine.sfuPort,
+      room.roomId,
+      _audioEngine.userId,
+    );
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(room.icon, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text('\'${room.name}\' 합주실로 이동했습니다 (방 #${room.roomId})'),
+          ],
+        ),
+        backgroundColor: const Color(0xFF5865F2),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _openCreateRoomDialog() {
+    final nextRoomId = _rooms.fold<int>(0, (max, r) => r.roomId > max ? r.roomId : max) + 1;
+    final nameController = TextEditingController(text: '새 합주실 #$nextRoomId');
+    final idController = TextEditingController(text: nextRoomId.toString());
+    final descController = TextEditingController();
+    IconData selectedIcon = Icons.music_note;
+
+    final availableIcons = [
+      Icons.music_note,
+      Icons.headphones,
+      Icons.piano,
+      Icons.graphic_eq,
+      Icons.album,
+      Icons.speaker,
+      Icons.mic,
+      Icons.radio,
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF2B2D31),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              title: Row(
+                children: const [
+                  Icon(Icons.add_circle, color: Color(0xFF5865F2)),
+                  SizedBox(width: 8),
+                  Text('새 합주실 개설', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: SizedBox(
+                  width: 440,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '합주실 기본 정보',
+                        style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: nameController,
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        decoration: const InputDecoration(
+                          labelText: '합주실 이름',
+                          hintText: '예: 주말 재즈 잼 세션, 락 밴드 합주실',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: idController,
+                        keyboardType: TextInputType.number,
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        decoration: const InputDecoration(
+                          labelText: 'SFU 방 번호 (Room ID)',
+                          hintText: '1, 2, 3...',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        '* 홈 NAS SFU 서버의 고유 채널 번호로 연결됩니다.',
+                        style: TextStyle(color: Color(0xFF949BA4), fontSize: 11),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: descController,
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        decoration: const InputDecoration(
+                          labelText: '합주실 소개 (선택)',
+                          hintText: '예: 기타/베이스/드럼 세션 자유 잼',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        '합주실 아이콘 선택',
+                        style: TextStyle(color: Color(0xFFB5BAC1), fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: availableIcons.map((iconData) {
+                          final isSelected = selectedIcon == iconData;
+                          return InkWell(
+                            onTap: () => setDialogState(() => selectedIcon = iconData),
+                            borderRadius: BorderRadius.circular(10),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: isSelected ? const Color(0xFF5865F2) : const Color(0xFF1E1F22),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: isSelected ? Colors.white : const Color(0xFF383A40),
+                                  width: isSelected ? 2 : 1,
+                                ),
+                              ),
+                              child: Icon(
+                                iconData,
+                                color: isSelected ? Colors.white : const Color(0xFF949BA4),
+                                size: 22,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2)),
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    if (name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('합주실 이름을 입력해주세요.'),
+                          backgroundColor: Color(0xFFF23F43),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                      return;
+                    }
+                    final roomId = int.tryParse(idController.text.trim()) ?? nextRoomId;
+
+                    final newRoom = JamRoom(
+                      id: DateTime.now().millisecondsSinceEpoch.toString(),
+                      name: name,
+                      roomId: roomId,
+                      icon: selectedIcon,
+                      description: descController.text.trim(),
+                    );
+
+                    setState(() {
+                      _rooms.add(newRoom);
+                      _selectedRoomIndex = _rooms.length - 1;
+                    });
+
+                    _audioEngine.configureSfu(
+                      _audioEngine.sfuIp,
+                      _audioEngine.sfuPort,
+                      newRoom.roomId,
+                      _audioEngine.userId,
+                    );
+
+                    Navigator.pop(context);
+
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('\'$name\' 합주실이 개설되었습니다! (방 번호: #$roomId)'),
+                        backgroundColor: const Color(0xFF23A55A),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.check, color: Colors.white, size: 18),
+                  label: const Text('합주실 개설', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _deleteCurrentRoom() {
+    if (_rooms.length <= 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('최소 1개의 합주실은 유지되어야 합니다.'),
+          backgroundColor: Color(0xFFF23F43),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final current = _currentRoom;
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2B2D31),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: const Text('합주실 닫기', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          content: Text(
+            '\'${current.name}\' 합주실을 닫고 목록에서 제거하시겠습니까?',
+            style: const TextStyle(color: Color(0xFFDBDEE1)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF23F43)),
+              onPressed: () {
+                setState(() {
+                  _rooms.removeAt(_selectedRoomIndex);
+                  _selectedRoomIndex = _selectedRoomIndex.clamp(0, _rooms.length - 1);
+                });
+                _audioEngine.configureSfu(
+                  _audioEngine.sfuIp,
+                  _audioEngine.sfuPort,
+                  _currentRoom.roomId,
+                  _audioEngine.userId,
+                );
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('\'${current.name}\' 합주실이 닫혔습니다.'),
+                    backgroundColor: const Color(0xFF4E5058),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: const Text('삭제', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String get _currentUserName {
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user?.displayName != null && user!.displayName!.trim().isNotEmpty) {
+          return user.displayName!;
+        }
+        if (user?.email != null && user!.email!.trim().isNotEmpty) {
+          return user.email!.split('@').first;
+        }
+      }
+    } catch (_) {}
+    return '의진';
+  }
+
+  Future<void> _confirmLogout() async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2B2D31),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: Row(
+            children: const [
+              Icon(Icons.logout, color: Color(0xFFF23F43)),
+              SizedBox(width: 8),
+              Text('로그아웃', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+            ],
+          ),
+          content: const Text(
+            '정말 합주실에서 로그아웃하시겠습니까?\n저장된 로그인 세션이 해제됩니다.',
+            style: TextStyle(color: Color(0xFFDBDEE1), fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소', style: TextStyle(color: Color(0xFF949BA4))),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF23F43)),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('로그아웃', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true) {
+      if (_audioEngine.isStreaming) {
+        _audioEngine.stop();
+      }
+      try {
+        if (Firebase.apps.isNotEmpty) {
+          await FirebaseAuth.instance.signOut();
+        }
+      } catch (_) {}
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        (route) => false,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('정상적으로 로그아웃되었습니다.'),
+          backgroundColor: Color(0xFF4E5058),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -234,12 +617,32 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                 child: Column(
                   children: [
                     const SizedBox(height: 12),
-                    _buildServerIcon(Icons.music_note, true, '우리들만의 합주실'),
-                    const SizedBox(height: 8),
-                    const Divider(color: Color(0xFF35363C), indent: 16, endIndent: 16),
-                    const SizedBox(height: 8),
-                    _buildServerIcon(Icons.add, false, '새 합주실 개설'),
-                    const Spacer(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            for (int i = 0; i < _rooms.length; i++) ...[
+                              _buildServerIcon(
+                                icon: _rooms[i].icon,
+                                isActive: _selectedRoomIndex == i,
+                                tooltip: '${_rooms[i].name} (방 #${_rooms[i].roomId})',
+                                onTap: () => _selectRoom(i),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            const Divider(color: Color(0xFF35363C), indent: 16, endIndent: 16),
+                            const SizedBox(height: 8),
+                            _buildServerIcon(
+                              icon: Icons.add,
+                              isActive: false,
+                              tooltip: '새 합주실 개설',
+                              onTap: _openCreateRoomDialog,
+                              isAddButton: true,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                     IconButton(
                       icon: const Icon(Icons.settings, color: Color(0xFF949BA4)),
                       onPressed: _openAudioSettingsDialog,
@@ -265,21 +668,82 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       decoration: const BoxDecoration(
                         border: Border(bottom: BorderSide(color: Color(0xFF1F2023))),
                       ),
-                      child: Row(
-                        children: const [
-                          Expanded(
-                            child: Text(
-                              '우리들만의 합주실',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                                fontSize: 14,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                      child: PopupMenuButton<String>(
+                        color: const Color(0xFF2B2D31),
+                        offset: const Offset(0, 48),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        tooltip: '합주실 옵션',
+                        onSelected: (value) {
+                          if (value == 'create') {
+                            _openCreateRoomDialog();
+                          } else if (value == 'settings') {
+                            _openAudioSettingsDialog();
+                          } else if (value == 'delete') {
+                            _deleteCurrentRoom();
+                          } else if (value == 'logout') {
+                            _confirmLogout();
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'create',
+                            child: Row(
+                              children: const [
+                                Icon(Icons.add_circle_outline, color: Color(0xFF5865F2), size: 18),
+                                SizedBox(width: 8),
+                                Text('새 합주실 개설', style: TextStyle(color: Colors.white, fontSize: 13)),
+                              ],
                             ),
                           ),
-                          Icon(Icons.keyboard_arrow_down, color: Color(0xFF949BA4), size: 18),
+                          PopupMenuItem(
+                            value: 'settings',
+                            child: Row(
+                              children: const [
+                                Icon(Icons.tune, color: Color(0xFF949BA4), size: 18),
+                                SizedBox(width: 8),
+                                Text('오인페 및 SFU 설정', style: TextStyle(color: Colors.white, fontSize: 13)),
+                              ],
+                            ),
+                          ),
+                          if (_rooms.length > 1)
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: const [
+                                  Icon(Icons.delete_outline, color: Color(0xFFF23F43), size: 18),
+                                  SizedBox(width: 8),
+                                  Text('현재 합주실 닫기', style: TextStyle(color: Color(0xFFF23F43), fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                          const PopupMenuDivider(height: 1),
+                          PopupMenuItem(
+                            value: 'logout',
+                            child: Row(
+                              children: const [
+                                Icon(Icons.logout, color: Color(0xFFF23F43), size: 18),
+                                SizedBox(width: 8),
+                                Text('로그아웃', style: TextStyle(color: Color(0xFFF23F43), fontSize: 13)),
+                              ],
+                            ),
+                          ),
                         ],
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _currentRoom.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Icon(Icons.keyboard_arrow_down, color: Color(0xFF949BA4), size: 18),
+                          ],
+                        ),
                       ),
                     ),
 
@@ -342,10 +806,13 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           Stack(
                             alignment: Alignment.bottomRight,
                             children: [
-                              const CircleAvatar(
+                              CircleAvatar(
                                 radius: 18,
-                                backgroundColor: Color(0xFF5865F2),
-                                child: Text('의진', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold)),
+                                backgroundColor: const Color(0xFF5865F2),
+                                child: Text(
+                                  _currentUserName.isNotEmpty ? _currentUserName[0].toUpperCase() : '의',
+                                  style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
+                                ),
                               ),
                               Container(
                                 width: 10,
@@ -364,9 +831,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
-                                  '의진 (나)',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
+                                Text(
+                                  '$_currentUserName (나)',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 Text(
@@ -388,6 +855,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                             ),
                             onPressed: _toggleJamming,
                             tooltip: _audioEngine.isStreaming ? '합주 송출 중지' : '합주 송출 시작',
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.logout, color: Color(0xFF949BA4), size: 18),
+                            onPressed: _confirmLogout,
+                            tooltip: '로그아웃',
                           ),
                         ],
                       ),
@@ -414,6 +886,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     switch (_selectedChannel) {
       case 0:
         return JamRoomScreen(
+          roomName: _currentRoom.name,
           onToggleJam: _toggleJamming,
           isJamming: _audioEngine.isStreaming,
           onOpenSettings: _openAudioSettingsDialog,
@@ -427,20 +900,63 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     }
   }
 
-  Widget _buildServerIcon(IconData icon, bool isActive, String tooltip) {
+  Widget _buildServerIcon({
+    required IconData icon,
+    required bool isActive,
+    required String tooltip,
+    required VoidCallback onTap,
+    bool isAddButton = false,
+  }) {
     return Tooltip(
       message: tooltip,
-      child: InkWell(
-        onTap: () {},
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: isActive ? const Color(0xFF5865F2) : const Color(0xFF313338),
-            borderRadius: BorderRadius.circular(isActive ? 16 : 24),
-          ),
-          child: Icon(icon, color: Colors.white, size: 24),
+      preferBelow: false,
+      child: SizedBox(
+        width: 72,
+        height: 48,
+        child: Stack(
+          alignment: Alignment.centerLeft,
+          children: [
+            // Discord 스타일 활성화 인디케이터 (왼쪽 흰색 필)
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 4,
+              height: isActive ? 40 : 0,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topRight: Radius.circular(4),
+                  bottomRight: Radius.circular(4),
+                ),
+              ),
+            ),
+            Center(
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(isActive ? 16 : 24),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? const Color(0xFF5865F2)
+                        : (isAddButton ? const Color(0xFF2B2D31) : const Color(0xFF313338)),
+                    borderRadius: BorderRadius.circular(isActive ? 16 : 24),
+                    border: isAddButton
+                        ? Border.all(color: const Color(0xFF23A55A).withValues(alpha: 0.5), width: 1.5)
+                        : null,
+                  ),
+                  child: Icon(
+                    icon,
+                    color: isAddButton
+                        ? const Color(0xFF23A55A)
+                        : (isActive ? Colors.white : const Color(0xFFDBDEE1)),
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -453,13 +969,12 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     bool isLive = false,
   }) {
     final bool isSelected = _selectedChannel == index;
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 2),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Material(
         color: isSelected ? const Color(0xFF404249) : Colors.transparent,
         borderRadius: BorderRadius.circular(6),
-      ),
-      child: ListTile(
+        child: ListTile(
         leading: Icon(
           icon,
           color: isSelected ? Colors.white : const Color(0xFF80848E),
@@ -493,6 +1008,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
         onTap: () => setState(() => _selectedChannel = index),
       ),
-    );
+    ),
+  );
   }
 }

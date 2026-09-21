@@ -26,11 +26,14 @@ class JamRoomScreen extends StatefulWidget {
   final bool isJamming;
   final VoidCallback onOpenSettings;
 
+  final String? roomName;
+
   const JamRoomScreen({
     super.key,
     required this.onToggleJam,
     required this.isJamming,
     required this.onOpenSettings,
+    this.roomName,
   });
 
   @override
@@ -119,9 +122,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 children: [
                   Row(
                     children: [
-                      const Text(
-                        '서울-경기 무압축 UDP 합주실',
-                        style: TextStyle(
+                      Text(
+                        widget.roomName ?? '서울-경기 무압축 UDP 합주실',
+                        style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                           color: Colors.white,
