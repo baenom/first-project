@@ -26,7 +26,7 @@ void main() {
 
     // 로그인 화면 요소 확인
     expect(find.text('합주실 입장'), findsOneWidget);
-    expect(find.text('이메일'), findsOneWidget);
+    expect(find.text('이메일 또는 닉네임'), findsOneWidget);
     expect(find.text('합주실 로비 접속'), findsOneWidget);
   });
 
