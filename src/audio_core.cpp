@@ -81,10 +81,10 @@ namespace {
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
-    // 초저지연 유지: 최대 2프레임(약 2.7ms~5.3ms) 분량만 큐잉 허용 (대기 지연 원천 차단)
+    // 네트워크 지터 흡수 버퍼: 패킷 출렁임(지터)을 유연하게 흡수하여 지직거림 방지 (약 40~60ms 한도)
     inline size_t get_target_queue_limit() {
-        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 2);
-        return (limit < 512) ? 512 : limit;
+        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 6);
+        return (limit < 3072) ? 3072 : limit;
     }
 
     uint64_t get_time_us() {
@@ -162,8 +162,8 @@ namespace {
             if (g_running.load()) {
                 std::lock_guard<std::mutex> lock(g_jitter_mutex);
 
-                // 지연 누적 방지(Catch-up): 큐에 2프레임 이상 쌓여있다면 오래된 샘플을 버리고 최신 실시간 오디오 위치로 강제 이동
-                size_t max_allowed_ahead = static_cast<size_t>(total_samples * 2);
+                // 지연 누적 방지(Catch-up): 큐가 목표 지터 한도를 초과할 때만 오래된 샘플 정리
+                size_t max_allowed_ahead = get_target_queue_limit();
                 while (g_playback_queue.size() > max_allowed_ahead) {
                     g_playback_queue.pop_front();
                 }

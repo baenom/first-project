@@ -967,10 +967,10 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 ),
               ),
               const SizedBox(width: 2),
-              _buildBufferChip(32, '32 samples (0.7ms)'),
-              _buildBufferChip(64, '64 samples (1.3ms)'),
               _buildBufferChip(128, '128 samples (2.7ms)'),
               _buildBufferChip(256, '256 samples (5.3ms)'),
+              _buildBufferChip(512, '512 samples (10.7ms) [표준]'),
+              _buildBufferChip(1024, '1024 samples (21.3ms) [안정]'),
             ],
           ),
 

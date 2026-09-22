@@ -599,7 +599,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
-                        children: [64, 128, 256].map((size) {
+                        children: [128, 256, 512, 1024].map((size) {
                           final selected = tempBuffer == size;
                           return ChoiceChip(
                             label: Text(

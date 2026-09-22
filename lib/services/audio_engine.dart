@@ -101,7 +101,7 @@ class AudioEngine extends ChangeNotifier {
   int _sampleRate = 48000;
   int get sampleRate => _sampleRate;
 
-  int _bufferSize = 128; // 64, 128, 256
+  int _bufferSize = 256; // 128, 256, 512, 1024
   int get bufferSize => _bufferSize;
 
   String _sfuIp = '127.0.0.1';
