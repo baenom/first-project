@@ -14,13 +14,26 @@ ZEROTIER_BASE_URL = "https://api.zerotier.com/api/v1"
 def get_api_token() -> str:
     """환경변수 또는 .env 파일에서 ZEROTIER_API_TOKEN 조회"""
     token = os.environ.get("ZEROTIER_API_TOKEN", "")
-    if not token and os.path.exists(".env"):
-        with open(".env", "r", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("ZEROTIER_API_TOKEN="):
-                    token = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
-                    break
+    if not token:
+        candidates = [
+            ".env",
+            os.path.join(os.path.dirname(__file__), ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        ]
+        for env_path in candidates:
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("ZEROTIER_API_TOKEN="):
+                            token = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+                            if token:
+                                return token
     return token
+
+
+def get_auth_header(token: str) -> str:
+    """ZeroTier API 인증 헤더 생성 (JWT 토큰일 경우 Bearer, 레거시 키일 경우 token)"""
+    return f"Bearer {token}" if token.startswith("ey") else f"token {token}"
 
 
 async def create_temp_network(name: str = "SyncRoom-Jam") -> Optional[Dict[str, Any]]:
@@ -35,7 +48,7 @@ async def create_temp_network(name: str = "SyncRoom-Jam") -> Optional[Dict[str, 
         return None
 
     headers = {
-        "Authorization": f"token {token}",
+        "Authorization": get_auth_header(token),
         "Content-Type": "application/json",
     }
 
@@ -91,7 +104,7 @@ async def delete_network(network_id: str) -> bool:
         return False
 
     headers = {
-        "Authorization": f"token {token}",
+        "Authorization": get_auth_header(token),
     }
 
     try:

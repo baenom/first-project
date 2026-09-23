@@ -24,6 +24,7 @@ class JamRoom {
   final String hostPublicIp;
   final String hostTailscaleIp;
   final String hostLanIp;
+  final String hostZeroTierIp;
   final int port;
   final bool isHost;
   final bool isUpnpActive;
@@ -41,6 +42,7 @@ class JamRoom {
     this.hostPublicIp = '',
     this.hostTailscaleIp = '',
     this.hostLanIp = '',
+    this.hostZeroTierIp = '',
     this.port = 9999,
     this.isHost = true,
     this.isUpnpActive = false,
@@ -48,8 +50,9 @@ class JamRoom {
     this.ztNetworkId,
   });
 
-  String get effectivePublicIp =>
-      hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp;
+  String get effectivePublicIp => hostZeroTierIp.isNotEmpty
+      ? hostZeroTierIp
+      : (hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp);
 
   static IconData iconFromCode(int code) {
     if (code == Icons.music_note.codePoint) return Icons.music_note;
@@ -72,12 +75,17 @@ class JamRoom {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     final hostUid = (data['hostUid'] as String?) ?? '';
     final hostName = (data['hostName'] as String?) ?? '방장';
-    final isHost = forceHost ||
-        (hostUid.isNotEmpty
-            ? (hostUid == currentUserId ||
-                (currentUserName.isNotEmpty && hostName == currentUserName))
-            : (currentUserId.isEmpty ||
-                (currentUserName.isNotEmpty && hostName == currentUserName)));
+
+    // 딥링크에서 명시적으로 게스트(isHost=false)로 진입한 경우 절대 방장으로 판단하지 않음
+    final deepLink = DeepLinkService().currentSession;
+    final isExplicitGuest = deepLink != null && !deepLink.isHost;
+
+    final isHost = isExplicitGuest
+        ? false
+        : (forceHost ||
+            (hostUid.isNotEmpty && currentUserId.isNotEmpty
+                ? (hostUid == currentUserId)
+                : (currentUserId.isNotEmpty && hostName == currentUserName)));
     final iconCode = (data['iconCode'] as int?) ?? Icons.music_note.codePoint;
     final publicIp =
         (data['hostPublicIp'] as String?) ??
@@ -85,9 +93,14 @@ class JamRoom {
         '';
     final tailscale = (data['hostTailscaleIp'] as String?) ?? '';
     final lan = (data['hostLanIp'] as String?) ?? '';
+    final ztIp = (data['hostZeroTierIp'] as String?) ?? '';
     final port = (data['port'] as int?) ?? 9999;
     final isUpnp = (data['isUpnpActive'] as bool?) ?? false;
     final ztNetId = (data['ztNetworkId'] as String?) ?? '';
+
+    final remote = ztIp.isNotEmpty
+        ? ztIp
+        : (publicIp.isNotEmpty ? publicIp : lan);
 
     return JamRoom(
       id: doc.id,
@@ -100,10 +113,11 @@ class JamRoom {
       hostPublicIp: publicIp,
       hostTailscaleIp: tailscale,
       hostLanIp: lan,
+      hostZeroTierIp: ztIp,
       port: port,
       isHost: isHost,
       isUpnpActive: isUpnp,
-      remoteIp: isHost ? '127.0.0.1' : (publicIp.isNotEmpty ? publicIp : lan),
+      remoteIp: isHost ? '127.0.0.1' : remote,
       ztNetworkId: ztNetId.isNotEmpty ? ztNetId : null,
     );
   }
@@ -159,28 +173,50 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
 
     // 디스코드 딥링크 세션이 존재하는 경우 초기 방 설정
     if (deepLink != null) {
+      final docId = 'discord-room-${deepLink.roomId}';
       if (deepLink.isHost) {
+        final hostName = deepLink.userName.isNotEmpty ? deepLink.userName : _currentUserName;
         _rooms[0] = JamRoom(
-          id: deepLink.roomId.toString(),
+          id: docId,
           name: deepLink.roomName,
           roomId: deepLink.roomId,
           icon: Icons.music_note,
-          description: '디스코드 개설 합주실 (방장)',
+          description: '디스코드 개설 합주실',
           hostUid: currentUid,
-          hostName: deepLink.userName,
+          hostName: hostName,
           port: deepLink.port,
           isHost: true,
           ztNetworkId: deepLink.ztNetworkId,
           remoteIp: '127.0.0.1',
         );
+
+        // 방장이 딥링크로 접속한 경우 즉시 Firebase Firestore에 방 등록/업데이트!
+        if (Firebase.apps.isNotEmpty) {
+          UpnpService().fetchPublicIpFromWeb().then((publicIp) {
+            final lanIp = UpnpService().localLanIp;
+            FirebaseFirestore.instance.collection('jam_rooms').doc(docId).set({
+              'name': deepLink.roomName,
+              'roomId': deepLink.roomId,
+              'iconCode': Icons.music_note.codePoint,
+              'description': '디스코드 개설 합주실 (방장: $hostName)',
+              'hostUid': currentUid,
+              'hostName': hostName,
+              'hostPublicIp': publicIp,
+              'hostLanIp': lanIp,
+              'port': deepLink.port,
+              'ztNetworkId': deepLink.ztNetworkId ?? '',
+              'createdAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          });
+        }
       } else {
         _rooms[0] = JamRoom(
-          id: deepLink.roomId.toString(),
+          id: docId,
           name: deepLink.roomName,
           roomId: deepLink.roomId,
           icon: Icons.music_note,
           description: '디스코드 참여 합주실',
-          hostName: '디스코드 방장',
+          hostName: '방장',
           hostPublicIp: deepLink.hostIp ?? '',
           port: deepLink.port,
           isHost: false,
@@ -196,9 +232,29 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     if (_currentRoom.isHost) {
       _audioEngine.startHostSfu(port: _currentRoom.port);
       UpnpService().openPort(port: _currentRoom.port).then((_) {
-        if (mounted) setState(() {});
+        if (mounted) {
+          setState(() {});
+          if (Firebase.apps.isNotEmpty && deepLink != null && deepLink.isHost) {
+            final docId = 'discord-room-${deepLink.roomId}';
+            FirebaseFirestore.instance.collection('jam_rooms').doc(docId).set({
+              'hostPublicIp': UpnpService().publicIp,
+              'hostLanIp': UpnpService().localLanIp,
+              'isUpnpActive': UpnpService().isPortMapped,
+            }, SetOptions(merge: true));
+          }
+        }
       });
     } else {
+      if (_audioEngine.isSfuServerRunning) {
+        _audioEngine.stopHostSfu();
+      }
+      final remote = _currentRoom.effectivePublicIp;
+      _audioEngine.configureSfu(
+        remote,
+        _currentRoom.port,
+        _currentRoom.roomId,
+        _audioEngine.userId,
+      );
       UpnpService().fetchPublicIpFromWeb().then((_) {
         if (mounted) setState(() {});
       });
@@ -232,6 +288,17 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     setState(() {
                       _rooms.clear();
                       _rooms.addAll(loaded);
+
+                      // 딥링크 방이 있으면 해당 방으로 _selectedRoomIndex 자동 전환!
+                      if (deepLink != null) {
+                        final docId = 'discord-room-${deepLink.roomId}';
+                        final matchIdx = _rooms.indexWhere(
+                            (r) => r.id == docId || r.roomId == deepLink.roomId);
+                        if (matchIdx != -1) {
+                          _selectedRoomIndex = matchIdx;
+                        }
+                      }
+
                       if (_rooms.isEmpty) {
                         _selectedRoomIndex = -1;
                       } else if (_selectedRoomIndex >= _rooms.length ||
@@ -242,7 +309,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     if (_selectedRoomIndex >= 0 &&
                         _selectedRoomIndex < _rooms.length) {
                       final cur = _currentRoom;
-                      if (cur.isHost || _audioEngine.isSfuServerRunning) {
+                      if (cur.isHost) {
                         if (!_audioEngine.isSfuServerRunning) {
                           _audioEngine.startHostSfu(port: cur.port);
                         }
@@ -253,6 +320,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           _audioEngine.userId,
                         );
                       } else {
+                        if (_audioEngine.isSfuServerRunning) {
+                          _audioEngine.stopHostSfu();
+                        }
                         final remote = cur.effectivePublicIp;
                         _audioEngine.configureSfu(
                           remote,
@@ -2115,6 +2185,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           hostPublicIp: _currentRoom.hostPublicIp,
           hostTailscaleIp: _currentRoom.hostTailscaleIp,
           hostLanIp: _currentRoom.hostLanIp,
+          hostZeroTierIp: _currentRoom.hostZeroTierIp,
           port: _currentRoom.port,
           ztNetworkId: _currentRoom.ztNetworkId,
           onToggleJam: _toggleJamming,

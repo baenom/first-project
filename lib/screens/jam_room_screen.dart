@@ -42,6 +42,7 @@ class JamRoomScreen extends StatefulWidget {
   final String hostPublicIp;
   final String hostTailscaleIp;
   final String hostLanIp;
+  final String hostZeroTierIp;
   final int port;
   final String? ztNetworkId;
 
@@ -58,12 +59,14 @@ class JamRoomScreen extends StatefulWidget {
     this.hostPublicIp = '',
     this.hostTailscaleIp = '',
     this.hostLanIp = '',
+    this.hostZeroTierIp = '',
     this.port = 9999,
     this.ztNetworkId,
   });
 
-  String get effectivePublicIp =>
-      hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp;
+  String get effectivePublicIp => hostZeroTierIp.isNotEmpty
+      ? hostZeroTierIp
+      : (hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp);
 
   @override
   State<JamRoomScreen> createState() => _JamRoomScreenState();
@@ -110,7 +113,13 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   @override
   void initState() {
     super.initState();
-    _isHost = widget.isHost || _audioEngine.isSfuServerRunning;
+    final deepLink = DeepLinkService().currentSession;
+    if (deepLink != null && !deepLink.isHost) {
+      _isHost = false;
+    } else {
+      _isHost = widget.isHost;
+    }
+
     _peers = [
       PeerState(
         userId: _audioEngine.userId,
@@ -126,6 +135,19 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         _audioEngine.startHostSfu(port: widget.port);
       }
       _triggerUpnp();
+    } else {
+      if (_audioEngine.isSfuServerRunning) {
+        _audioEngine.stopHostSfu();
+      }
+      final targetIp = widget.effectivePublicIp.isNotEmpty
+          ? widget.effectivePublicIp
+          : (widget.hostLanIp.isNotEmpty ? widget.hostLanIp : '127.0.0.1');
+      _audioEngine.configureSfu(
+        targetIp,
+        widget.port,
+        widget.roomId,
+        _audioEngine.userId,
+      );
     }
 
     // ZeroTier 1회용 가상 랜 자동 참여
@@ -135,6 +157,12 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         if (success && mounted) {
           final virtualIp = ZeroTierService().assignedVirtualIp.value;
           if (virtualIp != null && virtualIp.isNotEmpty) {
+            if (_isHost && Firebase.apps.isNotEmpty) {
+              final docId = widget.roomDocId ?? 'discord-room-${widget.roomId}';
+              FirebaseFirestore.instance.collection('jam_rooms').doc(docId).set({
+                'hostZeroTierIp': virtualIp,
+              }, SetOptions(merge: true));
+            }
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('🛡️ ZeroTier 1회용 가상 회선 연결 완료 (가상 IP: $virtualIp)'),
@@ -252,6 +280,16 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   @override
   void didUpdateWidget(JamRoomScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!_isHost &&
+        widget.hostZeroTierIp != oldWidget.hostZeroTierIp &&
+        widget.hostZeroTierIp.isNotEmpty) {
+      _audioEngine.configureSfu(
+        widget.hostZeroTierIp,
+        widget.port,
+        widget.roomId,
+        _audioEngine.userId,
+      );
+    }
     if (!_userOverrodeHost && widget.isHost != oldWidget.isHost) {
       _isHost = widget.isHost;
       if (_isHost) {
@@ -263,6 +301,15 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         if (_audioEngine.isSfuServerRunning) {
           _audioEngine.stopHostSfu();
         }
+        final targetIp = widget.effectivePublicIp.isNotEmpty
+            ? widget.effectivePublicIp
+            : (widget.hostLanIp.isNotEmpty ? widget.hostLanIp : '127.0.0.1');
+        _audioEngine.configureSfu(
+          targetIp,
+          widget.port,
+          widget.roomId,
+          _audioEngine.userId,
+        );
       }
       setState(() {});
     }
@@ -847,7 +894,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   if (netId == null && ztIp == null) {
                     return const SizedBox.shrink();
                   }
-                  final hostZtIp = DeepLinkService().currentSession?.hostIp;
+                  final hostZtIp = widget.hostZeroTierIp.isNotEmpty
+                      ? widget.hostZeroTierIp
+                      : DeepLinkService().currentSession?.hostIp;
                   final bool hasZtIp = ztIp != null && ztIp.isNotEmpty;
                   final String displayIp = hasZtIp
                       ? '내 가상 IP: $ztIp' +

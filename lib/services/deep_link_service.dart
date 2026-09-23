@@ -92,7 +92,9 @@ class DeepLinkService {
       final data = parseUrl(rawUrl);
       if (data != null) {
         sessionNotifier.value = data;
-        UserService().setProfile(nickname: data.userName, uid: data.userId);
+        if (data.isHost && data.userName.isNotEmpty) {
+          UserService().setProfile(nickname: data.userName, uid: data.userId);
+        }
         debugPrint('[DeepLink] Activated session: $data');
       }
     } catch (e) {
@@ -109,12 +111,12 @@ class DeepLinkService {
       final rawUser = params['user'] ?? params['nickname'] ?? params['username'];
       final userName = rawUser != null && rawUser.trim().isNotEmpty
           ? rawUser.trim()
-          : '디스코드 유저';
+          : (UserService().hasNickname ? UserService().nickname : '게스트');
 
       final rawUid = params['uid'] ?? params['id'];
       final userId = rawUid != null && rawUid.trim().isNotEmpty
           ? rawUid.trim()
-          : 'discord_${userName.hashCode.abs()}';
+          : (UserService().uid.isNotEmpty ? UserService().uid : 'guest_${userName.hashCode.abs()}');
 
       final roomId = int.tryParse(params['roomId'] ?? params['room'] ?? '') ?? 1;
       final rawRoomName = params['roomName'] ?? params['room_name'] ?? params['name'] ?? params['title'];

@@ -46,13 +46,15 @@ def create_deep_link(
 ) -> str:
     """gam:// 커스텀 URL 스킴 생성"""
     params = {
-        "user": user_name,
-        "uid": str(user_id),
         "roomId": str(room_id),
         "name": room_name,
         "isHost": "true" if is_host else "false",
         "port": str(port),
     }
+    if user_name:
+        params["user"] = user_name
+    if user_id:
+        params["uid"] = str(user_id)
     if ip:
         params["ip"] = ip
     if zt_net:
@@ -262,7 +264,7 @@ async def slash_create_room(
     }
 
     host_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=True, port=포트, ip=공인ip, zt_net=zt_net_id)
-    guest_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=False, port=포트, ip=공인ip, zt_net=zt_net_id)
+    guest_url = create_deep_link("", "", current_room_id, 방이름, is_host=False, port=포트, ip=공인ip, zt_net=zt_net_id)
 
     embed = discord.Embed(
         title=f"🎵 {방이름} (방 번호 #{current_room_id})",
@@ -358,7 +360,7 @@ async def cmd_create_room(ctx, *, 방이름: str = "온라인 실시간 합주�
     }
 
     host_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=True, port=DEFAULT_PORT, zt_net=zt_net_id)
-    guest_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=False, port=DEFAULT_PORT, zt_net=zt_net_id)
+    guest_url = create_deep_link("", "", current_room_id, 방이름, is_host=False, port=DEFAULT_PORT, zt_net=zt_net_id)
 
     embed = discord.Embed(
         title=f"🎵 {방이름} (방 번호 #{current_room_id})",
