@@ -11,6 +11,7 @@ import 'chat_view.dart';
 import 'lobby_screen.dart';
 import 'login_screen.dart';
 import '../services/deep_link_service.dart';
+import '../services/user_service.dart';
 
 class JamRoom {
   final String id;
@@ -148,9 +149,11 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     super.initState();
     final deepLink = DeepLinkService().currentSession;
     final currentUid = deepLink?.userId ??
-        (Firebase.apps.isNotEmpty
-            ? (FirebaseAuth.instance.currentUser?.uid ?? '')
-            : '');
+        (UserService().uid.isNotEmpty
+            ? UserService().uid
+            : (Firebase.apps.isNotEmpty
+                ? (FirebaseAuth.instance.currentUser?.uid ?? '')
+                : ''));
     _audioEngine.assignUniqueUserId(currentUid);
     _audioEngine.initialize(48000, 128);
 
@@ -207,7 +210,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       if (Firebase.apps.isNotEmpty) {
         final deepLink = DeepLinkService().currentSession;
         final currentUid = deepLink?.userId ??
-            (FirebaseAuth.instance.currentUser?.uid ?? '');
+            (UserService().uid.isNotEmpty
+                ? UserService().uid
+                : (FirebaseAuth.instance.currentUser?.uid ?? ''));
         _roomsSub = FirebaseFirestore.instance
             .collection('jam_rooms')
             .orderBy('createdAt', descending: false)
@@ -1329,6 +1334,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
     if (deepLink != null && deepLink.userName.isNotEmpty) {
       return deepLink.userName;
     }
+    final guest = UserService().nickname;
+    if (guest.isNotEmpty && guest != '게스트') {
+      return guest;
+    }
     try {
       if (Firebase.apps.isNotEmpty) {
         final user = FirebaseAuth.instance.currentUser;
@@ -1340,7 +1349,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
         }
       }
     } catch (_) {}
-    return '합주자';
+    return guest.isNotEmpty ? guest : '합주자';
   }
 
   void _openEditNicknameDialog() {
@@ -1393,23 +1402,17 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
               onPressed: () async {
                 final newName = controller.text.trim();
                 if (newName.isNotEmpty) {
-                  try {
-                    await FirebaseAuth.instance.currentUser?.updateDisplayName(
-                      newName,
+                  await UserService().setProfile(nickname: newName);
+                  if (mounted) {
+                    setState(() {});
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('닉네임이 \'$newName\'(으)로 변경되었습니다.'),
+                        backgroundColor: const Color(0xFF23A55A),
+                        duration: const Duration(seconds: 2),
+                      ),
                     );
-                    if (mounted) {
-                      setState(() {});
-                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('닉네임이 \'$newName\'(으)로 변경되었습니다.'),
-                          backgroundColor: const Color(0xFF23A55A),
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    debugPrint('Failed to update nickname: $e');
                   }
                 }
                 if (context.mounted) Navigator.pop(context);
@@ -1479,11 +1482,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
       if (_audioEngine.isStreaming) {
         _audioEngine.stop();
       }
-      try {
-        if (Firebase.apps.isNotEmpty) {
-          await FirebaseAuth.instance.signOut();
-        }
-      } catch (_) {}
+      await UserService().clearProfile();
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
         context,

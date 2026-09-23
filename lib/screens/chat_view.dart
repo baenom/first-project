@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/user_service.dart';
+import '../services/deep_link_service.dart';
 
 class ChatView extends StatefulWidget {
   final String roomId;
@@ -35,6 +37,14 @@ class _ChatViewState extends State<ChatView> {
   }
 
   String _getSenderName([User? user]) {
+    final deepLink = DeepLinkService().currentSession;
+    if (deepLink != null && deepLink.userName.isNotEmpty) {
+      return deepLink.userName;
+    }
+    final guestName = UserService().nickname;
+    if (guestName.isNotEmpty && guestName != '게스트') {
+      return guestName;
+    }
     final u = user ?? _currentUser;
     if (u?.displayName != null && u!.displayName!.trim().isNotEmpty) {
       return u.displayName!;
@@ -42,7 +52,7 @@ class _ChatViewState extends State<ChatView> {
     if (u?.email != null && u!.email!.trim().isNotEmpty) {
       return u.email!.split('@').first;
     }
-    return '합주자';
+    return guestName.isNotEmpty ? guestName : '합주자';
   }
 
   // 로컬 폴백 메시지 목록 (네트워크 단절 시 임시 보관)
@@ -62,6 +72,9 @@ class _ChatViewState extends State<ChatView> {
       }
       final user = _currentUser;
       final senderName = _getSenderName(user);
+      final senderUid = (user?.uid != null && user!.uid.isNotEmpty)
+          ? user.uid
+          : UserService().uid;
       await FirebaseFirestore.instance
           .collection('jam_rooms')
           .doc(widget.roomId)
@@ -70,7 +83,7 @@ class _ChatViewState extends State<ChatView> {
             'text': text,
             'sender': senderName,
             'senderEmail': user?.email ?? '',
-            'userId': user?.uid ?? 'anonymous',
+            'userId': senderUid,
             'timestamp': FieldValue.serverTimestamp(),
             'createdAt': DateTime.now().millisecondsSinceEpoch,
           });
@@ -245,12 +258,10 @@ class _ChatViewState extends State<ChatView> {
                           (data['senderEmail'] as String?) ?? '';
                       final userId = (data['userId'] as String?) ?? '';
 
-                      final isMe =
-                          (myUser != null &&
-                              (myUser.uid == userId ||
-                                  (myUser.email != null &&
-                                      myUser.email == senderEmail))) ||
-                          (myUser == null && sender == _getSenderName());
+                      final isMe = (userId.isNotEmpty &&
+                              (userId == UserService().uid ||
+                                  (myUser != null && myUser.uid == userId))) ||
+                          (sender == _getSenderName(myUser));
 
                       String timeStr = '방금';
                       if (data['timestamp'] is Timestamp) {

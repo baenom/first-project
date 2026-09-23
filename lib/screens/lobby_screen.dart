@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/user_service.dart';
+import '../services/deep_link_service.dart';
 
 class JamScheduleItem {
   final String id;
@@ -39,6 +41,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final _setlistController = TextEditingController();
 
   String _getMyMemberName() {
+    final deepLink = DeepLinkService().currentSession;
+    if (deepLink != null && deepLink.userName.isNotEmpty) {
+      return '${deepLink.userName} (나)';
+    }
+    final guest = UserService().nickname;
+    if (guest.isNotEmpty && guest != '게스트') {
+      return '$guest (나)';
+    }
     try {
       if (Firebase.apps.isNotEmpty) {
         final user = FirebaseAuth.instance.currentUser;
@@ -50,7 +60,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         }
       }
     } catch (_) {}
-    return '합주자 (나)';
+    return guest.isNotEmpty ? '$guest (나)' : '합주자 (나)';
   }
 
   void _showAddScheduleDialog() {

@@ -25,10 +25,13 @@ void main() {
     await tester.pumpWidget(const SyncRoomApp());
     await tester.pump();
 
-    // 로그인 화면 요소 확인
+    // 게스트 로그인 화면 요소 확인
     expect(find.text('합주실 입장'), findsOneWidget);
-    expect(find.text('이메일 또는 닉네임'), findsOneWidget);
-    expect(find.text('합주실 로비 접속'), findsOneWidget);
+    expect(find.text('합주실 닉네임 (활동명)'), findsOneWidget);
+    expect(
+      find.text('비밀번호/키체인 저장 없이 게스트로 즉시 합주실에 연결됩니다.'),
+      findsOneWidget,
+    );
   });
 
   test('AudioEngine initialization, configuration and host SFU test', () async {
@@ -131,24 +134,19 @@ void main() {
   });
 
   testWidgets(
-    'LoginScreen toggles to sign up mode and displays nickname input field',
+    'LoginScreen allows guest entry with nickname into MainLobbyScreen',
     (WidgetTester tester) async {
       await tester.pumpWidget(const SyncRoomApp());
       await tester.pump();
 
-      // In login mode, nickname field is not present
-      expect(find.text('합주실 닉네임 (활동명)'), findsNothing);
-
-      // Tap toggle to sign up mode ("새 멤버 등록이 필요하신가요? 회원가입")
-      final toggleBtn = find.text('새 멤버 등록이 필요하신가요? 회원가입');
-      expect(toggleBtn, findsOneWidget);
-      await tester.tap(toggleBtn);
+      // 닉네임 입력 및 입장 버튼 클릭
+      expect(find.text('합주실 닉네임 (활동명)'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '게스트테스트');
+      await tester.tap(find.text('합주실 입장'));
       await tester.pump();
 
-      // In sign up mode, nickname field is visible
-      expect(find.text('합주 멤버 가입'), findsOneWidget);
-      expect(find.text('합주실 닉네임 (활동명)'), findsOneWidget);
-      expect(find.widgetWithText(ElevatedButton, '계정 생성 후 입장'), findsOneWidget);
+      // 로비 화면 진입 확인
+      expect(find.byType(MainLobbyScreen), findsOneWidget);
     },
   );
 

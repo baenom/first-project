@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'user_service.dart';
 
 class DeepLinkData {
   final String userName;
@@ -91,6 +92,7 @@ class DeepLinkService {
       final data = parseUrl(rawUrl);
       if (data != null) {
         sessionNotifier.value = data;
+        UserService().setProfile(nickname: data.userName, uid: data.userId);
         debugPrint('[DeepLink] Activated session: $data');
       }
     } catch (e) {

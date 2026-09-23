@@ -8,6 +8,7 @@ import '../services/audio_engine.dart';
 import '../services/upnp_service.dart';
 import '../services/zerotier_service.dart';
 import '../services/deep_link_service.dart';
+import '../services/user_service.dart';
 
 class PeerState {
   final int userId;
@@ -84,6 +85,14 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   bool _userOverrodeHost = false;
 
   String _getMyName() {
+    final deepLink = DeepLinkService().currentSession;
+    if (deepLink != null && deepLink.userName.isNotEmpty) {
+      return deepLink.userName;
+    }
+    final guest = UserService().nickname;
+    if (guest.isNotEmpty && guest != '게스트') {
+      return guest;
+    }
     try {
       if (Firebase.apps.isNotEmpty) {
         final user = FirebaseAuth.instance.currentUser;
@@ -95,7 +104,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         }
       }
     } catch (_) {}
-    return '합주자';
+    return guest.isNotEmpty ? guest : '합주자';
   }
 
   @override
