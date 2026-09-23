@@ -19,9 +19,8 @@ from aiohttp import web
 
 import zerotier_api
 
-# 봇 기본 설정
+# 봇 기본 설정 (특권 인텐트 없이 기본 인텐트만으로 /합주실개설, /합주실종료 슬래시 명령어 완벽 지원)
 intents = discord.Intents.default()
-intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
