@@ -5,6 +5,7 @@ import 'package:gam/screens/main_lobby_screen.dart';
 import 'package:gam/screens/jam_room_screen.dart';
 import 'package:gam/services/audio_engine.dart';
 import 'package:gam/services/upnp_service.dart';
+import 'package:gam/services/deep_link_service.dart';
 
 void main() {
   setUpAll(() {
@@ -244,6 +245,56 @@ void main() {
     expect(find.text('방장의 공인 IP (UPnP 공유기 직결)'), findsOneWidget);
     expect(find.text('내가 이 방의 SFU 호스트 (방장)'), findsNothing);
     expect(find.text('SFU 서버 정지됨'), findsNothing);
+
+    // 내가 방장으로 서버 켜기 버튼 클릭 시 즉시 방장 모드로 전환되는지 검증
+    final hostSwitchBtn = find.text('내가 방장으로 서버 켜기');
+    expect(hostSwitchBtn, findsOneWidget);
+    await tester.tap(hostSwitchBtn);
+    await tester.pump();
+
+    expect(find.text('내가 이 방의 SFU 호스트 (방장)'), findsOneWidget);
+    expect(find.text('게스트 접속 모드 (방장: 김철수)'), findsNothing);
+    AudioEngine().stopHostSfu();
+  });
+
+  test('DeepLinkService correctly parses gam:// URL with parameters', () {
+    final service = DeepLinkService();
+
+    // 1. 방장 모드 URL 파싱 테스트
+    const hostUrl =
+        'gam://jam?user=%ED%99%8D%EA%B8%B8%EB%8F%99&uid=discord_99999&roomId=7&name=%EC%9E%AC%EC%A6%88%ED%95%A9%EC%A3%BC&isHost=true&port=9999&ip=61.102.205.131';
+    final hostData = service.parseUrl(hostUrl);
+    expect(hostData, isNotNull);
+    expect(hostData!.userName, '홍길동');
+    expect(hostData.userId, 'discord_99999');
+    expect(hostData.roomId, 7);
+    expect(hostData.roomName, '재즈합주');
+    expect(hostData.isHost, isTrue);
+    expect(hostData.hostIp, '61.102.205.131');
+    expect(hostData.port, 9999);
+
+    // 2. 게스트 모드 URL 파싱 테스트
+    const guestUrl =
+        'gam://jam?user=Gamer123&uid=445566&roomId=3&isHost=false';
+    final guestData = service.parseUrl(guestUrl);
+    expect(guestData, isNotNull);
+    expect(guestData!.userName, 'Gamer123');
+    expect(guestData.userId, '445566');
+    expect(guestData.roomId, 3);
+    expect(guestData.isHost, isFalse);
+
+    // 3. ZeroTier 1회용 가상 네트워크 ID 파싱 테스트
+    const ztUrl =
+        'gam://jam?user=Bae&uid=12345&roomId=10&ztNet=8056c2e21c000001&isHost=false';
+    final ztData = service.parseUrl(ztUrl);
+    expect(ztData, isNotNull);
+    expect(ztData!.ztNetworkId, '8056c2e21c000001');
+    expect(ztData.userName, 'Bae');
+    expect(ztData.roomId, 10);
+    expect(ztData.isHost, isFalse);
+
+    // 4. 잘못된 스킴 무시 테스트
+    expect(service.parseUrl('https://example.com'), isNull);
   });
 
   testWidgets(

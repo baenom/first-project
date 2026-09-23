@@ -6,6 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/audio_engine.dart';
 import '../services/upnp_service.dart';
+import '../services/zerotier_service.dart';
+import '../services/deep_link_service.dart';
 
 class PeerState {
   final int userId;
@@ -40,6 +42,7 @@ class JamRoomScreen extends StatefulWidget {
   final String hostTailscaleIp;
   final String hostLanIp;
   final int port;
+  final String? ztNetworkId;
 
   const JamRoomScreen({
     super.key,
@@ -55,6 +58,7 @@ class JamRoomScreen extends StatefulWidget {
     this.hostTailscaleIp = '',
     this.hostLanIp = '',
     this.port = 9999,
+    this.ztNetworkId,
   });
 
   String get effectivePublicIp =>
@@ -76,6 +80,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     'loopback': '127.0.0.1',
   };
 
+  late bool _isHost;
+  bool _userOverrodeHost = false;
+
   String _getMyName() {
     try {
       if (Firebase.apps.isNotEmpty) {
@@ -94,6 +101,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   @override
   void initState() {
     super.initState();
+    _isHost = widget.isHost || _audioEngine.isSfuServerRunning;
     _peers = [
       PeerState(
         userId: _audioEngine.userId,
@@ -104,11 +112,31 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     ];
     _syncPresence();
     _loadHostIps();
-    if (widget.isHost) {
+    if (_isHost) {
       if (!_audioEngine.isSfuServerRunning) {
         _audioEngine.startHostSfu(port: widget.port);
       }
       _triggerUpnp();
+    }
+
+    // ZeroTier 1회용 가상 랜 자동 참여
+    final ztNet = widget.ztNetworkId ?? DeepLinkService().currentSession?.ztNetworkId;
+    if (ztNet != null && ztNet.isNotEmpty) {
+      ZeroTierService().joinNetwork(ztNet).then((success) {
+        if (success && mounted) {
+          final virtualIp = ZeroTierService().assignedVirtualIp.value;
+          if (virtualIp != null && virtualIp.isNotEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('🛡️ ZeroTier 1회용 가상 회선 연결 완료 (가상 IP: $virtualIp)'),
+                backgroundColor: const Color(0xFF23A55A),
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+          setState(() {});
+        }
+      });
     }
   }
 
@@ -128,8 +156,8 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         'name': _getMyName(),
         'uid': uid,
         'userId': _audioEngine.userId,
-        'isHost': widget.isHost,
-        'instrument': widget.isHost ? '방장 (호스트)' : '합주 세션 멤버',
+        'isHost': _isHost,
+        'instrument': _isHost ? '방장 (호스트)' : '합주 세션 멤버',
         'joinedAt': FieldValue.serverTimestamp(),
       });
 
@@ -191,11 +219,16 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             .catchError((_) {});
       } catch (_) {}
     }
+
+    final ztNet = widget.ztNetworkId ?? DeepLinkService().currentSession?.ztNetworkId;
+    if (ztNet != null && ztNet.isNotEmpty) {
+      ZeroTierService().leaveNetwork(ztNet);
+    }
     super.dispose();
   }
 
   Future<void> _triggerUpnp() async {
-    if (!widget.isHost) return;
+    if (!_isHost) return;
     setState(() {
       _isUpnpLoading = true;
     });
@@ -210,8 +243,9 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   @override
   void didUpdateWidget(JamRoomScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isHost != oldWidget.isHost || widget.roomId != oldWidget.roomId) {
-      if (widget.isHost) {
+    if (!_userOverrodeHost && widget.isHost != oldWidget.isHost) {
+      _isHost = widget.isHost;
+      if (_isHost) {
         if (!_audioEngine.isSfuServerRunning) {
           _audioEngine.startHostSfu(port: widget.port);
         }
@@ -221,7 +255,54 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
           _audioEngine.stopHostSfu();
         }
       }
+      setState(() {});
     }
+  }
+
+  void _toggleHostMode() {
+    setState(() {
+      _isHost = !_isHost;
+      _userOverrodeHost = true;
+    });
+
+    if (_isHost) {
+      _audioEngine.startHostSfu(port: widget.port);
+      _audioEngine.configureSfu(
+        '127.0.0.1',
+        widget.port,
+        widget.roomId,
+        _audioEngine.userId,
+      );
+      _triggerUpnp();
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('👑 방장(호스트) 모드로 전환되었습니다. 내장 SFU 서버가 가동되었습니다.'),
+          backgroundColor: Color(0xFF23A55A),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    } else {
+      _audioEngine.stopHostSfu();
+      final targetIp = widget.effectivePublicIp.isNotEmpty
+          ? widget.effectivePublicIp
+          : (widget.hostLanIp.isNotEmpty ? widget.hostLanIp : '127.0.0.1');
+      _audioEngine.configureSfu(
+        targetIp,
+        widget.port,
+        widget.roomId,
+        _audioEngine.userId,
+      );
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('🎧 게스트 모드로 전환되었습니다. (타깃: $targetIp:${widget.port})'),
+          backgroundColor: const Color(0xFF5865F2),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+    _syncPresence();
   }
 
   Future<void> _loadHostIps() async {
@@ -246,7 +327,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
               // 1. 상단 세션 헤더 & 제어 바
               _buildTopSessionBar(),
               const SizedBox(height: 14),
-              if (widget.isHost)
+              if (_isHost)
                 _buildHostControlCard()
               else
                 _buildGuestControlCard(),
@@ -422,6 +503,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                       } else {
                         _audioEngine.startHostSfu(port: widget.port);
                       }
+                      setState(() {});
                     },
                     icon: Icon(
                       isRunning ? Icons.stop : Icons.play_arrow,
@@ -434,6 +516,20 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF949BA4),
+                      side: const BorderSide(color: Color(0xFF4E5058)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                    ),
+                    onPressed: _toggleHostMode,
+                    icon: const Icon(Icons.headphones, size: 14),
+                    label: const Text('게스트 전환', style: TextStyle(fontSize: 11)),
                   ),
                   const SizedBox(width: 8),
                   TextButton.icon(
@@ -484,6 +580,28 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 icon: Icons.wifi,
                 isPrimary: false,
                 copyValue: lan.isNotEmpty ? lan : '',
+              ),
+              // ZeroTier 1회용 P2P 가상 회선 Chip
+              ValueListenableBuilder<String?>(
+                valueListenable: ZeroTierService().assignedVirtualIp,
+                builder: (context, ztIp, _) {
+                  final netId = ZeroTierService().currentNetworkId.value ??
+                      widget.ztNetworkId ??
+                      DeepLinkService().currentSession?.ztNetworkId;
+                  if (netId == null && ztIp == null) {
+                    return const SizedBox.shrink();
+                  }
+                  final bool hasZtIp = ztIp != null && ztIp.isNotEmpty;
+                  return _buildIpChip(
+                    label: 'ZeroTier 1회용 P2P 가상 IP',
+                    ip: hasZtIp
+                        ? '$ztIp:$port (활성)'
+                        : 'ZeroTier 연결 중... (${netId ?? ''})',
+                    icon: Icons.shield_outlined,
+                    isPrimary: hasZtIp,
+                    copyValue: ztIp ?? '',
+                  );
+                },
               ),
               // Full invite copy button
               ElevatedButton.icon(
@@ -607,18 +725,43 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   ),
                 ],
               ),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF949BA4),
-                  side: const BorderSide(color: Color(0xFF4E5058)),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF5865F2),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onPressed: _toggleHostMode,
+                    icon: const Icon(Icons.star, size: 14),
+                    label: const Text(
+                      '내가 방장으로 서버 켜기',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                ),
-                onPressed: widget.onOpenSettings,
-                icon: const Icon(Icons.settings, size: 14),
-                label: const Text('연결 IP 설정', style: TextStyle(fontSize: 11)),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF949BA4),
+                      side: const BorderSide(color: Color(0xFF4E5058)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                    ),
+                    onPressed: widget.onOpenSettings,
+                    icon: const Icon(Icons.settings, size: 14),
+                    label: const Text('연결 IP 설정', style: TextStyle(fontSize: 11)),
+                  ),
+                ],
               ),
             ],
           ),
@@ -685,6 +828,55 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                     );
                   },
                 ),
+              // ZeroTier 1회용 P2P 가상 회선 Chip
+              ValueListenableBuilder<String?>(
+                valueListenable: ZeroTierService().assignedVirtualIp,
+                builder: (context, ztIp, _) {
+                  final netId = ZeroTierService().currentNetworkId.value ??
+                      widget.ztNetworkId ??
+                      DeepLinkService().currentSession?.ztNetworkId;
+                  if (netId == null && ztIp == null) {
+                    return const SizedBox.shrink();
+                  }
+                  final hostZtIp = DeepLinkService().currentSession?.hostIp;
+                  final bool hasZtIp = ztIp != null && ztIp.isNotEmpty;
+                  final String displayIp = hasZtIp
+                      ? '내 가상 IP: $ztIp' +
+                          (hostZtIp != null && hostZtIp.isNotEmpty
+                              ? ' (방장: $hostZtIp:$port)'
+                              : '')
+                      : 'ZeroTier 가상 네트워크 연결 중... (${netId ?? ''})';
+
+                  return _buildIpChip(
+                    label: 'ZeroTier 1회용 P2P 가상 회선',
+                    ip: displayIp,
+                    icon: Icons.shield_outlined,
+                    isPrimary: hasZtIp,
+                    copyValue: hostZtIp ?? ztIp ?? '',
+                    onSelect: (hostZtIp != null && hostZtIp.isNotEmpty)
+                        ? () {
+                            _audioEngine.configureSfu(
+                              hostZtIp,
+                              port,
+                              widget.roomId,
+                              _audioEngine.userId,
+                            );
+                            setState(() {});
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  '접속 IP가 방장 ZeroTier IP ($hostZtIp:$port)로 변경되었습니다.',
+                                ),
+                                backgroundColor: const Color(0xFF23A55A),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          }
+                        : null,
+                  );
+                },
+              ),
             ],
           ),
         ],
@@ -890,6 +1082,38 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
             children: [
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
+                  foregroundColor: _isHost
+                      ? const Color(0xFFFEE75C)
+                      : const Color(0xFF5865F2),
+                  side: BorderSide(
+                    color: _isHost
+                        ? const Color(0xFFFEE75C).withValues(alpha: 0.6)
+                        : const Color(0xFF5865F2).withValues(alpha: 0.6),
+                  ),
+                  backgroundColor: _isHost
+                      ? const Color(0xFFFEE75C).withValues(alpha: 0.12)
+                      : const Color(0xFF5865F2).withValues(alpha: 0.12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: _toggleHostMode,
+                icon: Icon(
+                  _isHost ? Icons.workspace_premium : Icons.headphones,
+                  size: 18,
+                ),
+                label: Text(
+                  _isHost ? '방장(호스트) 모드' : '게스트 모드',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFFDBDEE1),
                   side: const BorderSide(color: Color(0xFF4E5058)),
                   padding: const EdgeInsets.symmetric(
@@ -1016,12 +1240,12 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 children: [
                   Icon(
                     widget.isJamming
-                        ? (_audioEngine.rxPackets > 0 || widget.isHost
+                        ? (_audioEngine.rxPackets > 0 || _isHost
                             ? Icons.wifi_tethering
                             : Icons.sync)
                         : Icons.wifi_off,
                     color: widget.isJamming
-                        ? (_audioEngine.rxPackets > 0 || widget.isHost
+                        ? (_audioEngine.rxPackets > 0 || _isHost
                             ? const Color(0xFF57F287)
                             : const Color(0xFFFEE75C))
                         : const Color(0xFF949BA4),
@@ -1030,7 +1254,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   const SizedBox(width: 6),
                   Text(
                     widget.isJamming
-                        ? (widget.isHost
+                        ? (_isHost
                             ? 'SFU 가동 중 (송신: ${_audioEngine.txPackets} pkts | 활성 피어: ${_audioEngine.remotePeersCount}명)'
                             : (_audioEngine.rxPackets > 0
                                 ? '방장 신호 수신 중 (수신: ${_audioEngine.rxPackets} pkts, 송신: ${_audioEngine.txPackets})'
@@ -1038,7 +1262,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                         : '합주 대기 상태 (송출 시작 필요)',
                     style: TextStyle(
                       color: widget.isJamming
-                          ? (_audioEngine.rxPackets > 0 || widget.isHost
+                          ? (_audioEngine.rxPackets > 0 || _isHost
                               ? const Color(0xFF57F287)
                               : const Color(0xFFFEE75C))
                           : const Color(0xFF949BA4),

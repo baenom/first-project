@@ -5,8 +5,13 @@ import 'package:gam/firebase_options.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_lobby_screen.dart';
 
-void main() async {
+import 'services/deep_link_service.dart';
+
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 딥링크 서비스 초기화 (Windows CLI args 및 macOS MethodChannel)
+  await DeepLinkService().init(args);
 
   try {
     await Firebase.initializeApp(
@@ -39,8 +44,14 @@ class SyncRoomApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: Builder(
-        builder: (context) {
+      home: ValueListenableBuilder<DeepLinkData?>(
+        valueListenable: DeepLinkService().sessionNotifier,
+        builder: (context, deepLinkSession, _) {
+          // 디스코드 딥링크로 접속한 경우 키체인/로그인 없이 즉시 로비/합주실 진입
+          if (deepLinkSession != null) {
+            return const MainLobbyScreen();
+          }
+
           bool isFirebaseInitialized = false;
           try {
             isFirebaseInitialized = Firebase.apps.isNotEmpty;

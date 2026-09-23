@@ -10,6 +10,7 @@ import 'jam_room_screen.dart';
 import 'chat_view.dart';
 import 'lobby_screen.dart';
 import 'login_screen.dart';
+import '../services/deep_link_service.dart';
 
 class JamRoom {
   final String id;
@@ -26,6 +27,7 @@ class JamRoom {
   final bool isHost;
   final bool isUpnpActive;
   final String remoteIp;
+  final String? ztNetworkId;
 
   JamRoom({
     required this.id,
@@ -42,14 +44,11 @@ class JamRoom {
     this.isHost = true,
     this.isUpnpActive = false,
     this.remoteIp = '127.0.0.1',
+    this.ztNetworkId,
   });
 
-  String get effectivePublicIp {
-    if (hostPublicIp.isNotEmpty) return hostPublicIp;
-    if (hostTailscaleIp.isNotEmpty) return hostTailscaleIp;
-    if (hostLanIp.isNotEmpty) return hostLanIp;
-    return '127.0.0.1';
-  }
+  String get effectivePublicIp =>
+      hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp;
 
   static IconData iconFromCode(int code) {
     if (code == Icons.music_note.codePoint) return Icons.music_note;
@@ -63,12 +62,21 @@ class JamRoom {
     return Icons.music_note;
   }
 
-  factory JamRoom.fromFirestore(DocumentSnapshot doc, String currentUserId) {
+  factory JamRoom.fromFirestore(
+    DocumentSnapshot doc,
+    String currentUserId, {
+    String currentUserName = '',
+    bool forceHost = false,
+  }) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     final hostUid = (data['hostUid'] as String?) ?? '';
-    final isHost = hostUid.isNotEmpty
-        ? (hostUid == currentUserId)
-        : (currentUserId.isEmpty);
+    final hostName = (data['hostName'] as String?) ?? '방장';
+    final isHost = forceHost ||
+        (hostUid.isNotEmpty
+            ? (hostUid == currentUserId ||
+                (currentUserName.isNotEmpty && hostName == currentUserName))
+            : (currentUserId.isEmpty ||
+                (currentUserName.isNotEmpty && hostName == currentUserName)));
     final iconCode = (data['iconCode'] as int?) ?? Icons.music_note.codePoint;
     final publicIp =
         (data['hostPublicIp'] as String?) ??
@@ -78,6 +86,7 @@ class JamRoom {
     final lan = (data['hostLanIp'] as String?) ?? '';
     final port = (data['port'] as int?) ?? 9999;
     final isUpnp = (data['isUpnpActive'] as bool?) ?? false;
+    final ztNetId = (data['ztNetworkId'] as String?) ?? '';
 
     return JamRoom(
       id: doc.id,
@@ -86,7 +95,7 @@ class JamRoom {
       icon: iconFromCode(iconCode),
       description: (data['description'] as String?) ?? '',
       hostUid: hostUid,
-      hostName: (data['hostName'] as String?) ?? '방장',
+      hostName: hostName,
       hostPublicIp: publicIp,
       hostTailscaleIp: tailscale,
       hostLanIp: lan,
@@ -94,6 +103,7 @@ class JamRoom {
       isHost: isHost,
       isUpnpActive: isUpnp,
       remoteIp: isHost ? '127.0.0.1' : (publicIp.isNotEmpty ? publicIp : lan),
+      ztNetworkId: ztNetId.isNotEmpty ? ztNetId : null,
     );
   }
 }
@@ -136,11 +146,49 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   @override
   void initState() {
     super.initState();
-    final currentUid = Firebase.apps.isNotEmpty
-        ? (FirebaseAuth.instance.currentUser?.uid ?? '')
-        : '';
+    final deepLink = DeepLinkService().currentSession;
+    final currentUid = deepLink?.userId ??
+        (Firebase.apps.isNotEmpty
+            ? (FirebaseAuth.instance.currentUser?.uid ?? '')
+            : '');
     _audioEngine.assignUniqueUserId(currentUid);
     _audioEngine.initialize(48000, 128);
+
+    // 디스코드 딥링크 세션이 존재하는 경우 초기 방 설정
+    if (deepLink != null) {
+      if (deepLink.isHost) {
+        _rooms[0] = JamRoom(
+          id: deepLink.roomId.toString(),
+          name: deepLink.roomName,
+          roomId: deepLink.roomId,
+          icon: Icons.music_note,
+          description: '디스코드 개설 합주실 (방장)',
+          hostUid: currentUid,
+          hostName: deepLink.userName,
+          port: deepLink.port,
+          isHost: true,
+          ztNetworkId: deepLink.ztNetworkId,
+          remoteIp: '127.0.0.1',
+        );
+      } else {
+        _rooms[0] = JamRoom(
+          id: deepLink.roomId.toString(),
+          name: deepLink.roomName,
+          roomId: deepLink.roomId,
+          icon: Icons.music_note,
+          description: '디스코드 참여 합주실',
+          hostName: '디스코드 방장',
+          hostPublicIp: deepLink.hostIp ?? '',
+          port: deepLink.port,
+          isHost: false,
+          ztNetworkId: deepLink.ztNetworkId,
+          remoteIp: (deepLink.hostIp != null && deepLink.hostIp!.isNotEmpty)
+              ? deepLink.hostIp!
+              : '127.0.0.1',
+        );
+      }
+    }
+
     _listenToRooms();
     if (_currentRoom.isHost) {
       _audioEngine.startHostSfu(port: _currentRoom.port);
@@ -157,7 +205,9 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   void _listenToRooms() {
     try {
       if (Firebase.apps.isNotEmpty) {
-        final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        final deepLink = DeepLinkService().currentSession;
+        final currentUid = deepLink?.userId ??
+            (FirebaseAuth.instance.currentUser?.uid ?? '');
         _roomsSub = FirebaseFirestore.instance
             .collection('jam_rooms')
             .orderBy('createdAt', descending: false)
@@ -166,7 +216,12 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
               (snapshot) {
                 if (snapshot.docs.isNotEmpty) {
                   final loaded = snapshot.docs
-                      .map((d) => JamRoom.fromFirestore(d, currentUid))
+                      .map((d) => JamRoom.fromFirestore(
+                            d,
+                            currentUid,
+                            currentUserName: _currentUserName,
+                            forceHost: deepLink?.isHost == true,
+                          ))
                       .toList();
                   if (mounted) {
                     setState(() {
@@ -182,7 +237,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     if (_selectedRoomIndex >= 0 &&
                         _selectedRoomIndex < _rooms.length) {
                       final cur = _currentRoom;
-                      if (cur.isHost) {
+                      if (cur.isHost || _audioEngine.isSfuServerRunning) {
                         if (!_audioEngine.isSfuServerRunning) {
                           _audioEngine.startHostSfu(port: cur.port);
                         }
@@ -193,9 +248,6 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                           _audioEngine.userId,
                         );
                       } else {
-                        if (_audioEngine.isSfuServerRunning) {
-                          _audioEngine.stopHostSfu();
-                        }
                         final remote = cur.effectivePublicIp;
                         _audioEngine.configureSfu(
                           remote,
@@ -681,11 +733,52 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
                     if (isHostMode) {
                       _audioEngine.startHostSfu(port: port);
                       _audioEngine.configureSfu('127.0.0.1', port, room, user);
+                      if (_selectedRoomIndex >= 0 && _selectedRoomIndex < _rooms.length) {
+                        final cur = _rooms[_selectedRoomIndex];
+                        _rooms[_selectedRoomIndex] = JamRoom(
+                          id: cur.id,
+                          name: cur.name,
+                          roomId: room,
+                          icon: cur.icon,
+                          description: cur.description,
+                          hostUid: cur.hostUid,
+                          hostName: cur.hostName,
+                          hostPublicIp: cur.hostPublicIp,
+                          hostTailscaleIp: cur.hostTailscaleIp,
+                          hostLanIp: cur.hostLanIp,
+                          port: port,
+                          isHost: true,
+                          isUpnpActive: cur.isUpnpActive,
+                          remoteIp: '127.0.0.1',
+                          ztNetworkId: cur.ztNetworkId,
+                        );
+                      }
                     } else {
                       _audioEngine.stopHostSfu();
                       _audioEngine.configureSfu(ip, port, room, user);
+                      if (_selectedRoomIndex >= 0 && _selectedRoomIndex < _rooms.length) {
+                        final cur = _rooms[_selectedRoomIndex];
+                        _rooms[_selectedRoomIndex] = JamRoom(
+                          id: cur.id,
+                          name: cur.name,
+                          roomId: room,
+                          icon: cur.icon,
+                          description: cur.description,
+                          hostUid: cur.hostUid,
+                          hostName: cur.hostName,
+                          hostPublicIp: cur.hostPublicIp,
+                          hostTailscaleIp: cur.hostTailscaleIp,
+                          hostLanIp: cur.hostLanIp,
+                          port: port,
+                          isHost: false,
+                          isUpnpActive: cur.isUpnpActive,
+                          remoteIp: ip,
+                          ztNetworkId: cur.ztNetworkId,
+                        );
+                      }
                     }
                     _audioEngine.setBufferSize(tempBuffer);
+                    setState(() {});
 
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -1232,6 +1325,10 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
   }
 
   String get _currentUserName {
+    final deepLink = DeepLinkService().currentSession;
+    if (deepLink != null && deepLink.userName.isNotEmpty) {
+      return deepLink.userName;
+    }
     try {
       if (Firebase.apps.isNotEmpty) {
         final user = FirebaseAuth.instance.currentUser;
@@ -2020,6 +2117,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           hostTailscaleIp: _currentRoom.hostTailscaleIp,
           hostLanIp: _currentRoom.hostLanIp,
           port: _currentRoom.port,
+          ztNetworkId: _currentRoom.ztNetworkId,
           onToggleJam: _toggleJamming,
           isJamming: _audioEngine.isStreaming,
           onOpenSettings: _openAudioSettingsDialog,

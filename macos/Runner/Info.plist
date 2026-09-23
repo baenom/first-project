@@ -30,5 +30,18 @@
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>SyncRoom 온라인 합주를 위해 마이크 및 오디오 인터페이스 입력을 사용합니다.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.example.gam</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>gam</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
