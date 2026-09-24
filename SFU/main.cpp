@@ -110,7 +110,7 @@ int main(int argc, char* argv[]) {
     uint64_t total_packets_fwd = 0;
 
     auto last_stats_time = std::chrono::steady_clock::now();
-    uint8_t recv_buffer[4096];
+    uint8_t recv_buffer[8192];
 
     while (g_running) {
         sockaddr_in client_addr{};

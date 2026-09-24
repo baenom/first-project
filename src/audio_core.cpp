@@ -199,7 +199,7 @@ namespace {
 
 // 백그라운드 UDP 패킷 수신 및 오디오 지터 버퍼링
 void network_receive_loop() {
-    uint8_t buffer[4096];
+    uint8_t buffer[8192];
     sockaddr_in from_addr{};
     socklen_t from_len = sizeof(from_addr);
 
@@ -503,7 +503,7 @@ extern "C" {
         void embedded_sfu_loop(int port) {
             std::cout << "[Embedded SFU] Relay server listening on UDP port " << port << std::endl;
             std::unordered_map<uint16_t, std::vector<EmbeddedPeerInfo>> rooms;
-            uint8_t recv_buffer[4096];
+            uint8_t recv_buffer[8192];
             auto last_stats_time = std::chrono::steady_clock::now();
 
             while (g_sfu_server_running) {
