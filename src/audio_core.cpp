@@ -77,6 +77,9 @@ namespace {
     // 하드웨어 오디오 디바이스 (miniaudio)
     ma_device g_ma_device;
     std::atomic<bool> g_ma_device_initialized{false};
+    std::atomic<bool> g_hardware_callback_active{false};
+    std::atomic<bool> g_fallback_tx_running{false};
+    std::thread g_fallback_tx_thread;
 
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
@@ -95,6 +98,7 @@ namespace {
 
     // miniaudio Duplex 콜백 (마이크 입력 + 스피커 출력 동시 처리)
     void audio_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+        g_hardware_callback_active.store(true);
         ma_uint32 total_samples = frameCount * pDevice->capture.channels;
 
         // 1. 마이크 입력 처리 (Capture)
@@ -266,7 +270,45 @@ void network_receive_loop() {
     }
 }
 
-// 500ms 주기 핑 전송 루프 (RTT 측정용)
+// 하드웨어 오디오 콜백이 동작하지 않거나 대기 중일 때 동작하는 백업 무음 패킷 송신 루프
+void fallback_silence_tx_loop() {
+    // 하드웨어 콜백이 300ms 내에 동작하지 않을 경우 무음 오디오 패킷 송출로 세션 유지 및 홀펀칭
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    
+    while (g_running.load() && g_fallback_tx_running.load()) {
+        if (!g_hardware_callback_active.load() && g_sockfd != INVALID_SOCKET) {
+            ma_uint32 channels = 2;
+            ma_uint32 total_samples = static_cast<ma_uint32>(g_buffer_size * channels);
+            std::vector<int16_t> silence_pcm(total_samples, 0);
+
+            AudioPacketHeader audio_header{};
+            audio_header.magic = SYNC_MAGIC;
+            audio_header.packet_type = PACKET_TYPE_AUDIO;
+            audio_header.room_id = g_room_id;
+            audio_header.user_id = g_user_id;
+            audio_header.sequence_num = ++g_sequence_counter;
+            audio_header.timestamp_us = get_time_us();
+            audio_header.sample_rate = static_cast<uint16_t>(g_sample_rate);
+            audio_header.channels = static_cast<uint8_t>(channels);
+            audio_header.bits_per_sample = 16;
+            audio_header.frame_count = static_cast<uint16_t>(g_buffer_size);
+            audio_header.payload_bytes = static_cast<uint16_t>(total_samples * sizeof(int16_t));
+
+            std::vector<uint8_t> packet(sizeof(AudioPacketHeader) + audio_header.payload_bytes);
+            std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
+            std::memcpy(packet.data() + sizeof(AudioPacketHeader), silence_pcm.data(), audio_header.payload_bytes);
+
+            sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
+                   (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            g_tx_packets++;
+        }
+        int sleep_ms = (g_buffer_size * 1000) / (g_sample_rate > 0 ? g_sample_rate : 48000);
+        if (sleep_ms < 5) sleep_ms = 5;
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+    }
+}
+
+// 500ms 주기 핑 전송 루프 (RTT 측정용 및 Keep-Alive)
 void ping_loop() {
     while (g_running) {
         if (g_sockfd != INVALID_SOCKET) {
@@ -278,6 +320,7 @@ void ping_loop() {
             ping_header.timestamp_us = get_time_us();
             sendto(g_sockfd, (const char*)&ping_header, sizeof(ping_header), 0,
                    (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            g_tx_packets++;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
@@ -408,10 +451,15 @@ extern "C" {
         join_header.timestamp_us = get_time_us();
         sendto(g_sockfd, (const char*)&join_header, sizeof(join_header), 0,
                (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+        g_tx_packets++;
 
-        // 백그라운드 수신 및 핑 스레드 시작
+        // 백그라운드 수신, 핑, 백업 무음 송신 스레드 시작
         g_network_thread = std::thread(network_receive_loop);
         g_ping_thread = std::thread(ping_loop);
+
+        g_hardware_callback_active.store(false);
+        g_fallback_tx_running.store(true);
+        g_fallback_tx_thread = std::thread(fallback_silence_tx_loop);
 
         // 만약 하드웨어 디바이스가 초기화되지 않았다면 재시도
         if (!g_ma_device_initialized.load()) {
@@ -431,6 +479,7 @@ extern "C" {
         if (!g_running.load()) return;
 
         g_running.store(false);
+        g_fallback_tx_running.store(false);
 
         // 하드웨어 오디오 스트리밍 중지
         if (g_ma_device_initialized.load()) {
@@ -452,6 +501,7 @@ extern "C" {
             g_sockfd = INVALID_SOCKET;
         }
 
+        if (g_fallback_tx_thread.joinable()) g_fallback_tx_thread.join();
         if (g_network_thread.joinable()) g_network_thread.join();
         if (g_ping_thread.joinable()) g_ping_thread.join();
 

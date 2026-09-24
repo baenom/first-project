@@ -70,6 +70,7 @@ class JamRoomScreen extends StatefulWidget {
     if (hostZeroTierIp.isNotEmpty) return hostZeroTierIp;
     if (remoteIp.isNotEmpty && remoteIp != '127.0.0.1') return remoteIp;
     if (hostPublicIp.isNotEmpty) return hostPublicIp;
+    if (hostLanIp.isNotEmpty) return hostLanIp;
     return hostTailscaleIp;
   }
 
