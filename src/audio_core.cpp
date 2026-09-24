@@ -85,6 +85,7 @@ namespace {
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
     std::atomic<size_t> g_incoming_packet_samples{0};
+    std::atomic<bool> g_first_playback{true};
     int16_t g_last_playback_sample_L = 0;
     int16_t g_last_playback_sample_R = 0;
     bool g_playback_was_starving = false;
@@ -131,54 +132,56 @@ namespace {
         ma_uint32 play_channels = (pDevice->playback.channels > 0) ? pDevice->playback.channels : 2;
         ma_uint32 play_samples = frameCount * play_channels;
 
-        // 1. 마이크 입력 처리 (Capture)
-        if (g_running.load()) {
+        // 1. 마이크 입력 처리 및 UDP 전송 (Capture)
+        // macOS CoreAudio 및 Windows WASAPI 듀플렉스 모드에서는 콜백이
+        // 캡처용(pInput != nullptr, pOutput == nullptr)과 재생용(pOutput != nullptr, pInput == nullptr)으로
+        // 각각 독립적으로 분리 호출됩니다.
+        // 따라서 오디오 패킷 송신은 오직 유효한 마이크 캡처 입력(pInput != nullptr)이 있을 때만 수행해야 합니다!
+        // pInput == nullptr(재생 콜백)일 때 무음 패킷을 보내면 2배의 패킷 폭증 및 무음 교차로 인해
+        // 수신측 큐가 포화(대규모 레이턴시 적체)되고 오디오가 뚝뚝 끊기게 됩니다.
+        if (g_running.load() && pInput != nullptr) {
             ma_uint32 net_channels = 2; // 패킷은 항상 2채널 스테레오로 통일하여 전송
             ma_uint32 net_samples = frameCount * net_channels;
             std::vector<int16_t> processed_pcm(net_samples, 0);
 
-            if (pInput != nullptr) {
-                const int16_t* in_pcm = reinterpret_cast<const int16_t*>(pInput);
-                float gain = g_input_gain.load();
-                double sum_sq = 0.0;
+            const int16_t* in_pcm = reinterpret_cast<const int16_t*>(pInput);
+            float gain = g_input_gain.load();
+            double sum_sq = 0.0;
 
-                for (ma_uint32 f = 0; f < frameCount; ++f) {
-                    if (cap_channels == 1) {
-                        // 모노 마이크(맥북 내장 마이크 등) 입력을 좌/우 채널로 복제하여
-                        // 2배속 칩멍크 왜곡 및 위상 반전 노이즈를 완벽 해결
-                        float sample = in_pcm[f] * gain;
-                        int16_t s_int = soft_clip(sample);
-                        processed_pcm[f * 2] = s_int;
-                        processed_pcm[f * 2 + 1] = s_int;
+            for (ma_uint32 f = 0; f < frameCount; ++f) {
+                if (cap_channels == 1) {
+                    // 모노 마이크(맥북 내장 마이크 등) 입력을 좌/우 채널로 복제하여
+                    // 2배속 칩멍크 왜곡 및 위상 반전 노이즈를 완벽 해결
+                    float sample = in_pcm[f] * gain;
+                    int16_t s_int = soft_clip(sample);
+                    processed_pcm[f * 2] = s_int;
+                    processed_pcm[f * 2 + 1] = s_int;
 
-                        float norm = s_int / 32768.0f;
-                        sum_sq += (norm * norm);
-                    } else {
-                        // 스테레오 입력
-                        float sample_L = in_pcm[f * cap_channels] * gain;
-                        float sample_R = in_pcm[f * cap_channels + 1] * gain;
-                        int16_t s_L = soft_clip_s16(sample_L);
-                        int16_t s_R = soft_clip_s16(sample_R);
-                        processed_pcm[f * 2] = s_L;
-                        processed_pcm[f * 2 + 1] = s_R;
-
-                        float norm_L = s_L / 32768.0f;
-                        float norm_R = s_R / 32768.0f;
-                        sum_sq += 0.5 * (norm_L * norm_L + norm_R * norm_R);
-                    }
-                }
-
-                // 실제 RMS 입력 게인 레벨 계산
-                float rms = std::sqrt(sum_sq / (frameCount > 0 ? frameCount : 1));
-                float target_level = std::clamp(rms * 4.5f, 0.0f, 1.0f);
-                float current = g_in_level.load();
-                if (target_level > current) {
-                    g_in_level.store(target_level);
+                    float norm = s_int / 32768.0f;
+                    sum_sq += (norm * norm);
                 } else {
-                    g_in_level.store(current * 0.82f + target_level * 0.18f);
+                    // 스테레오 입력
+                    float sample_L = in_pcm[f * cap_channels] * gain;
+                    float sample_R = in_pcm[f * cap_channels + 1] * gain;
+                    int16_t s_L = soft_clip_s16(sample_L);
+                    int16_t s_R = soft_clip_s16(sample_R);
+                    processed_pcm[f * 2] = s_L;
+                    processed_pcm[f * 2 + 1] = s_R;
+
+                    float norm_L = s_L / 32768.0f;
+                    float norm_R = s_R / 32768.0f;
+                    sum_sq += 0.5 * (norm_L * norm_L + norm_R * norm_R);
                 }
+            }
+
+            // 실제 RMS 입력 게인 레벨 계산
+            float rms = std::sqrt(sum_sq / (frameCount > 0 ? frameCount : 1));
+            float target_level = std::clamp(rms * 4.5f, 0.0f, 1.0f);
+            float current = g_in_level.load();
+            if (target_level > current) {
+                g_in_level.store(target_level);
             } else {
-                g_in_level.store(g_in_level.load() * 0.75f);
+                g_in_level.store(current * 0.82f + target_level * 0.18f);
             }
 
             // UDP 오디오 패킷 생성 및 SFU 전송
@@ -204,6 +207,8 @@ namespace {
                        (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
                 g_tx_packets++;
             }
+        } else if (g_running.load() && pInput == nullptr && pOutput == nullptr) {
+            g_in_level.store(g_in_level.load() * 0.75f);
         }
 
         // 2. 스피커 출력 처리 (Playback)
@@ -214,11 +219,33 @@ namespace {
             if (g_running.load()) {
                 std::lock_guard<std::mutex> lock(g_jitter_mutex);
 
-                // 장기 지연 누적 방지(Catch-up):
-                // 정상적인 패킷 뭉침(마이크로 버스트 15~20ms)은 버리지 않고 그대로 유지하며,
-                // 심각한 네트워크 정체(약 50ms 이상 적체) 발생 시에만 좌/우 프레임 페어(2개 샘플) 단위로 안전 정리
-                constexpr size_t MAX_ACCEPTABLE_QUEUE = 4800; // ~50ms @ 48kHz stereo
-                while (g_playback_queue.size() > MAX_ACCEPTABLE_QUEUE && g_playback_queue.size() >= 2) {
+                // 초저지연 실시간 합주를 위한 목표 큐 크기 (더블 버퍼링: 약 5~10ms):
+                // 128 버퍼: 512 샘플 (~5.3ms)
+                // 256 버퍼: 1024 샘플 (~10.6ms)
+                size_t target_queue = static_cast<size_t>(g_buffer_size * 2 * 2);
+                if (target_queue < 512) target_queue = 512;
+
+                // 시작 시 오디오 장치 구동 지연 플러시 (초기 연결 동안 적체된 묵은 패킷 즉시 제거)
+                if (g_first_playback.load()) {
+                    g_first_playback.store(false);
+                    while (g_playback_queue.size() > target_queue && g_playback_queue.size() >= 2) {
+                        g_playback_queue.pop_front();
+                        g_playback_queue.pop_front();
+                    }
+                }
+
+                // 적응형 지연 자동 회수 (Adaptive Catch-Up):
+                // 네트워크 버스트로 인해 큐가 목표치를 128샘플(약 1.3ms) 초과했을 때,
+                // 콜백당 2샘플(1 스테레오 프레임 = 0.02ms)씩 미세하게 회수하여
+                // 귀로 인지 불가능한 상태에서 상시 초저지연(5~10ms) 상태를 유지
+                if (g_playback_queue.size() > target_queue + 128 && g_playback_queue.size() >= 2) {
+                    g_playback_queue.pop_front();
+                    g_playback_queue.pop_front();
+                }
+
+                // 지연 상한선(목표치의 3배 초과 시 즉시 최신화하여 고정 딜레이 방지)
+                size_t hard_ceiling = target_queue * 3;
+                while (g_playback_queue.size() > hard_ceiling && g_playback_queue.size() >= 2) {
                     g_playback_queue.pop_front();
                     g_playback_queue.pop_front();
                 }
@@ -353,13 +380,12 @@ void network_receive_loop() {
                                 }
                             }
 
-                            // 극단적인 비정상 네트워크 정체(100ms 이상 통신 일시 중단 후 수십 개 패킷 동시 도달) 시에만
-                            // 안전 상한선(약 100ms)을 초과하는 오래된 데이터만 페어(L/R) 단위로 정리
-                            // 일상적인 패킷 뭉침(마이크로 버스트 10~25ms)은 절대로 버리지 않음!
-                            constexpr size_t EMERGENCY_MAX_QUEUE = 9600; // ~100ms @ 48kHz stereo
-                            while (g_playback_queue.size() > EMERGENCY_MAX_QUEUE) {
+                            // 수신 스레드 비상 상한선 (약 20ms @ 48kHz stereo)
+                            // 비정상적인 지연 누적을 원천 차단하고 항상 최신 실시간 오디오를 유지
+                            constexpr size_t EMERGENCY_MAX_QUEUE = 2048; // ~21ms
+                            while (g_playback_queue.size() > EMERGENCY_MAX_QUEUE && g_playback_queue.size() >= 2) {
                                 g_playback_queue.pop_front();
-                                if (!g_playback_queue.empty()) g_playback_queue.pop_front();
+                                g_playback_queue.pop_front();
                             }
                         }
                     }
@@ -551,6 +577,7 @@ extern "C" {
             g_last_playback_sample_L = 0;
             g_last_playback_sample_R = 0;
             g_playback_was_starving = false;
+            g_first_playback.store(true);
         }
 
         // UDP 소켓 개설
@@ -655,6 +682,7 @@ extern "C" {
             g_last_playback_sample_L = 0;
             g_last_playback_sample_R = 0;
             g_playback_was_starving = false;
+            g_first_playback.store(true);
         }
 
         g_in_level.store(0.0f);
