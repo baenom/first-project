@@ -84,11 +84,32 @@ namespace {
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
-    // 초저지연 실시간 합주를 위한 지터 버퍼 한도 (최대 1.5 ~ 2 버퍼 분량, 약 5~10ms)
-    // 큐 누적으로 인한 고정 지연(30ms 이상)을 제거하고 즉시 재생
+    int16_t g_last_playback_sample_L = 0;
+    int16_t g_last_playback_sample_R = 0;
+    bool g_playback_was_starving = false;
+
+    // 부드러운 아날로그 포화(Soft Saturation) 곡선:
+    // [-0.8, 0.8] 범위에서는 100% 완전 투명(선형),
+    // 0.8 초과 시 tanh 기반의 부드러운 곡선으로 라운딩하여
+    // 귀를 찌르는 사각파 하드 클리핑("지지직" 디지털 왜곡)을 완벽하게 제거
+    inline int16_t soft_clip_s16(float sample) {
+        float x = sample / 32768.0f;
+        if (x > 0.8f) {
+            float d = x - 0.8f;
+            x = 0.8f + 0.199f * std::tanh(d * 5.0f);
+        } else if (x < -0.8f) {
+            float d = -x - 0.8f;
+            x = -(0.8f + 0.199f * std::tanh(d * 5.0f));
+        }
+        return static_cast<int16_t>(x * 32767.0f);
+    }
+
+    // 초저지연 실시간 합주를 위한 지터 버퍼 한도 (기본 15~20ms)
     inline size_t get_target_queue_limit() {
-        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 2);
-        return (limit < 512) ? 512 : limit;
+        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 6);
+        if (limit < 1536) limit = 1536;
+        if (limit > 8192) limit = 8192;
+        return limit;
     }
 
     uint64_t get_time_us() {
@@ -100,32 +121,50 @@ namespace {
     // miniaudio Duplex 콜백 (마이크 입력 + 스피커 출력 동시 처리)
     void audio_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
         g_hardware_callback_active.store(true);
-        ma_uint32 total_samples = frameCount * pDevice->capture.channels;
+
+        ma_uint32 cap_channels = (pDevice->capture.channels > 0) ? pDevice->capture.channels : 1;
+        ma_uint32 play_channels = (pDevice->playback.channels > 0) ? pDevice->playback.channels : 2;
+        ma_uint32 play_samples = frameCount * play_channels;
 
         // 1. 마이크 입력 처리 (Capture)
         if (g_running.load()) {
-            ma_uint32 channels = (pDevice->capture.channels > 0) ? pDevice->capture.channels : 2;
-            total_samples = frameCount * channels;
-            std::vector<int16_t> processed_pcm(total_samples, 0);
+            ma_uint32 net_channels = 2; // 패킷은 항상 2채널 스테레오로 통일하여 전송
+            ma_uint32 net_samples = frameCount * net_channels;
+            std::vector<int16_t> processed_pcm(net_samples, 0);
 
             if (pInput != nullptr) {
                 const int16_t* in_pcm = reinterpret_cast<const int16_t*>(pInput);
                 float gain = g_input_gain.load();
                 double sum_sq = 0.0;
 
-                for (ma_uint32 i = 0; i < total_samples; ++i) {
-                    float sample = in_pcm[i] * gain;
-                    if (sample > 32767.0f) sample = 32767.0f;
-                    if (sample < -32768.0f) sample = -32768.0f;
-                    int16_t s_int = static_cast<int16_t>(sample);
-                    processed_pcm[i] = s_int;
+                for (ma_uint32 f = 0; f < frameCount; ++f) {
+                    if (cap_channels == 1) {
+                        // 모노 마이크(맥북 내장 마이크 등) 입력을 좌/우 채널로 복제하여
+                        // 2배속 칩멍크 왜곡 및 위상 반전 노이즈를 완벽 해결
+                        float sample = in_pcm[f] * gain;
+                        int16_t s_int = soft_clip_s16(sample);
+                        processed_pcm[f * 2] = s_int;
+                        processed_pcm[f * 2 + 1] = s_int;
 
-                    float norm = s_int / 32768.0f;
-                    sum_sq += (norm * norm);
+                        float norm = s_int / 32768.0f;
+                        sum_sq += (norm * norm);
+                    } else {
+                        // 스테레오 입력
+                        float sample_L = in_pcm[f * cap_channels] * gain;
+                        float sample_R = in_pcm[f * cap_channels + 1] * gain;
+                        int16_t s_L = soft_clip_s16(sample_L);
+                        int16_t s_R = soft_clip_s16(sample_R);
+                        processed_pcm[f * 2] = s_L;
+                        processed_pcm[f * 2 + 1] = s_R;
+
+                        float norm_L = s_L / 32768.0f;
+                        float norm_R = s_R / 32768.0f;
+                        sum_sq += 0.5 * (norm_L * norm_L + norm_R * norm_R);
+                    }
                 }
 
                 // 실제 RMS 입력 게인 레벨 계산
-                float rms = std::sqrt(sum_sq / (total_samples > 0 ? total_samples : 1));
+                float rms = std::sqrt(sum_sq / (frameCount > 0 ? frameCount : 1));
                 float target_level = std::clamp(rms * 4.5f, 0.0f, 1.0f);
                 float current = g_in_level.load();
                 if (target_level > current) {
@@ -134,11 +173,10 @@ namespace {
                     g_in_level.store(current * 0.82f + target_level * 0.18f);
                 }
             } else {
-                // 마이크 미연결/권한 대기 시 입력 레벨 감쇄
                 g_in_level.store(g_in_level.load() * 0.75f);
             }
 
-            // UDP 오디오 패킷 생성 및 SFU 전송 (마이크가 없거나 권한 대기 중이어도 세션 유지를 위해 무음 패킷 전송)
+            // UDP 오디오 패킷 생성 및 SFU 전송
             if (g_sockfd != INVALID_SOCKET) {
                 AudioPacketHeader audio_header{};
                 audio_header.magic = SYNC_MAGIC;
@@ -148,10 +186,10 @@ namespace {
                 audio_header.sequence_num = ++g_sequence_counter;
                 audio_header.timestamp_us = get_time_us();
                 audio_header.sample_rate = static_cast<uint16_t>(g_sample_rate);
-                audio_header.channels = static_cast<uint8_t>(channels);
+                audio_header.channels = static_cast<uint8_t>(net_channels);
                 audio_header.bits_per_sample = 16;
                 audio_header.frame_count = static_cast<uint16_t>(frameCount);
-                audio_header.payload_bytes = static_cast<uint16_t>(total_samples * sizeof(int16_t));
+                audio_header.payload_bytes = static_cast<uint16_t>(net_samples * sizeof(int16_t));
 
                 std::vector<uint8_t> packet(sizeof(AudioPacketHeader) + audio_header.payload_bytes);
                 std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
@@ -166,32 +204,69 @@ namespace {
         // 2. 스피커 출력 처리 (Playback)
         if (pOutput != nullptr) {
             int16_t* out_pcm = reinterpret_cast<int16_t*>(pOutput);
-            std::memset(out_pcm, 0, total_samples * sizeof(int16_t));
+            std::memset(out_pcm, 0, play_samples * sizeof(int16_t));
 
             if (g_running.load()) {
                 std::lock_guard<std::mutex> lock(g_jitter_mutex);
 
-                // 지연 누적 방지(Catch-up): 큐가 목표 지터 한도를 초과할 때만 오래된 샘플 정리
-                size_t max_allowed_ahead = get_target_queue_limit();
-                while (g_playback_queue.size() > max_allowed_ahead) {
+                // 장기 지연 누적 방지(Catch-up):
+                // 정상적인 패킷 뭉침(마이크로 버스트 15~20ms)은 버리지 않고 그대로 유지하며,
+                // 심각한 네트워크 정체(약 50ms 이상 적체) 발생 시에만 좌/우 프레임 페어(2개 샘플) 단위로 안전 정리
+                constexpr size_t MAX_ACCEPTABLE_QUEUE = 4800; // ~50ms @ 48kHz stereo
+                while (g_playback_queue.size() > MAX_ACCEPTABLE_QUEUE && g_playback_queue.size() >= 2) {
+                    g_playback_queue.pop_front();
                     g_playback_queue.pop_front();
                 }
 
                 size_t available = g_playback_queue.size();
-                size_t to_read = std::min(static_cast<size_t>(total_samples), available);
+                size_t to_read = std::min(static_cast<size_t>(play_samples), available);
+                to_read = (to_read / 2) * 2; // 스테레오 프레임(L/R) 정렬 보장
 
+                // 큐에서 패킷 데이터를 읽어 스피커로 전달
                 for (size_t i = 0; i < to_read; ++i) {
                     out_pcm[i] = g_playback_queue.front();
                     g_playback_queue.pop_front();
                 }
 
+                // 직전 버퍼 고갈(Starvation) 이후 새로 패킷이 들어올 때 첫 4샘플 마이크로 페이드인 (팝 잡음 방지)
+                if (g_playback_was_starving && to_read >= 4) {
+                    out_pcm[0] = static_cast<int16_t>(out_pcm[0] * 0.25f);
+                    out_pcm[1] = static_cast<int16_t>(out_pcm[1] * 0.25f);
+                    out_pcm[2] = static_cast<int16_t>(out_pcm[2] * 0.60f);
+                    out_pcm[3] = static_cast<int16_t>(out_pcm[3] * 0.60f);
+                    g_playback_was_starving = false;
+                }
+
+                // 언더런(버퍼 고갈) 발생 시 급격한 0 드롭(디지털 스텝 임펄스 잡음) 방지:
+                // 이전 마지막 샘플에서 지수 감쇄(Exponential Decay)로 부드럽게 0으로 수렴시켜
+                // "지지직"거리는 디지털 클리핑 및 틱 잡음을 완벽 차단
+                if (to_read < play_samples) {
+                    g_playback_was_starving = true;
+                    int16_t last_L = (to_read >= 2) ? out_pcm[to_read - 2] : g_last_playback_sample_L;
+                    int16_t last_R = (to_read >= 1) ? out_pcm[to_read - 1] : g_last_playback_sample_R;
+                    for (size_t i = to_read; i < play_samples; i += 2) {
+                        last_L = static_cast<int16_t>(last_L * 0.85f);
+                        last_R = static_cast<int16_t>(last_R * 0.85f);
+                        out_pcm[i] = last_L;
+                        if (i + 1 < play_samples) {
+                            out_pcm[i + 1] = last_R;
+                        }
+                    }
+                }
+
+                // 마지막 샘플 상태 저장 (다음 콜백 시작 시 불연속 방지용)
+                if (play_samples >= 2) {
+                    g_last_playback_sample_L = out_pcm[play_samples - 2];
+                    g_last_playback_sample_R = out_pcm[play_samples - 1];
+                }
+
                 // 출력 RMS 레벨 계산
                 double out_sum_sq = 0.0;
-                for (ma_uint32 i = 0; i < total_samples; ++i) {
+                for (ma_uint32 i = 0; i < play_samples; ++i) {
                     float s = out_pcm[i] / 32768.0f;
                     out_sum_sq += (s * s);
                 }
-                float out_rms = std::sqrt(out_sum_sq / (total_samples > 0 ? total_samples : 1));
+                float out_rms = std::sqrt(out_sum_sq / (play_samples > 0 ? play_samples : 1));
                 float target_out = std::clamp(out_rms * 4.5f, 0.0f, 1.0f);
                 float cur_out = g_out_level.load();
                 if (target_out > cur_out) {
@@ -201,6 +276,9 @@ namespace {
                 }
             } else {
                 g_out_level.store(0.0f);
+                g_last_playback_sample_L = 0;
+                g_last_playback_sample_R = 0;
+                g_playback_was_starving = false;
             }
         }
     }
@@ -248,20 +326,34 @@ void network_receive_loop() {
                             }
                         }
 
-                        // 지터 큐에 추가
+                        // 지터 큐에 추가: 패킷이 뭉쳐와도 버리지 않고 큐에 차곡차곡 보관하여
+                        // 오디오 하드웨어 콜백이 스피커로 끊김 없이 자연스럽게 흘려보낼 수 있게 함
                         {
                             std::lock_guard<std::mutex> q_lock(g_jitter_mutex);
-                            for (int i = 0; i < samples; ++i) {
-                                float val = pcm[i] * vol;
-                                if (val > 32767.0f) val = 32767.0f;
-                                if (val < -32768.0f) val = -32768.0f;
-                                g_playback_queue.push_back(static_cast<int16_t>(val));
+                            if (header->channels == 1) {
+                                // 1채널 모노 패킷인 경우 L/R로 복제하여 2채널 큐에 추가
+                                for (int i = 0; i < samples; ++i) {
+                                    float val = pcm[i] * vol;
+                                    int16_t s = soft_clip_s16(val);
+                                    g_playback_queue.push_back(s);
+                                    g_playback_queue.push_back(s);
+                                }
+                            } else {
+                                // 2채널 스테레오 패킷
+                                for (int i = 0; i < samples; ++i) {
+                                    float val = pcm[i] * vol;
+                                    int16_t s = soft_clip_s16(val);
+                                    g_playback_queue.push_back(s);
+                                }
                             }
 
-                            // 초저지연 유지: 큐가 목표 한도를 초과하면 오래된 샘플을 즉시 버려서 실시간 유지
-                            size_t max_queue = get_target_queue_limit();
-                            while (g_playback_queue.size() > max_queue) {
+                            // 극단적인 비정상 네트워크 정체(100ms 이상 통신 일시 중단 후 수십 개 패킷 동시 도달) 시에만
+                            // 안전 상한선(약 100ms)을 초과하는 오래된 데이터만 페어(L/R) 단위로 정리
+                            // 일상적인 패킷 뭉침(마이크로 버스트 10~25ms)은 절대로 버리지 않음!
+                            constexpr size_t EMERGENCY_MAX_QUEUE = 9600; // ~100ms @ 48kHz stereo
+                            while (g_playback_queue.size() > EMERGENCY_MAX_QUEUE) {
                                 g_playback_queue.pop_front();
+                                if (!g_playback_queue.empty()) g_playback_queue.pop_front();
                             }
                         }
                     }
@@ -416,6 +508,9 @@ extern "C" {
         {
             std::lock_guard<std::mutex> lock(g_jitter_mutex);
             g_playback_queue.clear();
+            g_last_playback_sample_L = 0;
+            g_last_playback_sample_R = 0;
+            g_playback_was_starving = false;
         }
 
         // UDP 소켓 개설
@@ -517,6 +612,9 @@ extern "C" {
         {
             std::lock_guard<std::mutex> lock(g_jitter_mutex);
             g_playback_queue.clear();
+            g_last_playback_sample_L = 0;
+            g_last_playback_sample_R = 0;
+            g_playback_was_starving = false;
         }
 
         g_in_level.store(0.0f);
