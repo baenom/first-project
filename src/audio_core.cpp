@@ -84,10 +84,18 @@ namespace {
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
+    std::atomic<size_t> g_incoming_packet_samples{0};
+
     // 초저지연 실시간 합주를 위한 지터 버퍼 한도 (최대 1.5 ~ 2 버퍼 분량, 약 5~10ms)
-    // 큐 누적으로 인한 고정 지연(30ms 이상)을 제거하고 즉시 재생
+    // P2P 다이렉트(RTT 1~2ms) 환경에 맞추어 큐 대기열 상시 지연(30ms 이상)을 제거하고 즉시 재생
     inline size_t get_target_queue_limit() {
-        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 2);
+        size_t local_samples = static_cast<size_t>(g_buffer_size * 2);
+        size_t incoming = g_incoming_packet_samples.load();
+        size_t frame_samples = (incoming > local_samples) ? incoming : local_samples;
+
+        // 더블 버퍼링(2 periods) 기준: 1~2ms 네트워크 출렁임만 완충하고 최소한의 지연 유지
+        size_t limit = frame_samples * 2;
+        // 최소 512샘플 (48kHz 스테레오 기준 약 5.33ms)
         return (limit < 512) ? 512 : limit;
     }
 
@@ -237,6 +245,7 @@ void network_receive_loop() {
                         }
 
                         int samples = header->payload_bytes / sizeof(int16_t);
+                        g_incoming_packet_samples.store(static_cast<size_t>(samples));
                         const int16_t* pcm = reinterpret_cast<const int16_t*>(buffer + sizeof(AudioPacketHeader));
 
                         float vol = 1.0f;
@@ -362,29 +371,63 @@ extern "C" {
             config.pUserData = nullptr;
             config.performanceProfile = ma_performance_profile_low_latency;
 #ifdef _WIN32
-            // 윈도우 OS 믹서 지연(20~30ms) 우회 및 Pro Audio 저지연 모드 적용
+            // Windows 멀티미디어 실시간 스케줄러(MMCSS) "Pro Audio" 우선순위 등록 및 믹서 우회 플래그
             config.wasapi.usage = ma_wasapi_usage_pro_audio;
             config.wasapi.noAutoConvertSRC = MA_TRUE;
             config.wasapi.noDefaultQualitySRC = MA_TRUE;
             config.wasapi.noHardwareOffloading = MA_TRUE;
+
+            ma_result init_res = MA_ERROR;
+
+            // 1단계: Windows OS 사운드 믹서(audiodg.exe 20ms 지연)를 원천 우회하는 WASAPI Exclusive(단독) 모드 시도
+            config.playback.shareMode = ma_share_mode_exclusive;
+            config.capture.shareMode = ma_share_mode_exclusive;
+            init_res = ma_device_init(nullptr, &config, &g_ma_device);
+
+            if (init_res == MA_SUCCESS) {
+                std::cout << "[AudioCore] Hardware audio duplex initialized in WASAPI Exclusive Mode (Zero OS Mixer Latency)." << std::endl;
+            } else {
+                // 2단계: 양방향 Exclusive가 불가할 경우 출력 Exclusive + 입력 Shared 시도
+                config.playback.shareMode = ma_share_mode_exclusive;
+                config.capture.shareMode = ma_share_mode_shared;
+                init_res = ma_device_init(nullptr, &config, &g_ma_device);
+
+                if (init_res == MA_SUCCESS) {
+                    std::cout << "[AudioCore] Hardware audio duplex initialized with Playback Exclusive Mode." << std::endl;
+                } else {
+                    // 3단계: Exclusive가 불가능한 경우 (타 앱 점유 등) IAudioClient3 초저지연 Shared + Pro Audio MMCSS 모드로 안전 폴백
+                    config.playback.shareMode = ma_share_mode_shared;
+                    config.capture.shareMode = ma_share_mode_shared;
+                    init_res = ma_device_init(nullptr, &config, &g_ma_device);
+
+                    if (init_res == MA_SUCCESS) {
+                        std::cout << "[AudioCore] Hardware audio duplex initialized in WASAPI Low-Latency Shared Mode (Pro Audio MMCSS)." << std::endl;
+                    }
+                }
+            }
+#else
+            ma_result init_res = ma_device_init(nullptr, &config, &g_ma_device);
 #endif
 
-            if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
+            if (init_res == MA_SUCCESS) {
                 g_ma_device_initialized.store(true);
                 if (g_running.load()) {
                     ma_device_start(&g_ma_device);
                 }
-                std::cout << "[AudioCore] Hardware audio duplex device successfully initialized via miniaudio (Buffer: " 
+                std::cout << "[AudioCore] Hardware audio duplex device successfully started (Buffer: " 
                           << g_buffer_size << ", Periods: 2)." << std::endl;
             } else {
                 std::cerr << "[AudioCore Warning] Failed to initialize duplex audio device. Trying playback-only fallback..." << std::endl;
                 config.deviceType = ma_device_type_playback;
+                config.playback.shareMode = ma_share_mode_shared;
                 if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
                     g_ma_device_initialized.store(true);
                     if (g_running.load()) {
                         ma_device_start(&g_ma_device);
                     }
                     std::cout << "[AudioCore] Fallback: Playback-only audio device initialized." << std::endl;
+                } else {
+                    std::cerr << "[AudioCore Warning] Failed to initialize playback audio device. Result: " << init_res << std::endl;
                 }
             }
         }
@@ -664,7 +707,7 @@ extern "C" {
                     for (auto& pair : rooms) {
                         auto& list = pair.second;
                         for (auto it = list.begin(); it != list.end(); ) {
-                            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->last_seen).count() > 3) {
+                            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->last_seen).count() > 5) {
                                 std::cout << "[Embedded SFU Room " << pair.first << "] Peer timeout: User " << it->user_id << std::endl;
                                 it = list.erase(it);
                             } else {
