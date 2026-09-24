@@ -85,9 +85,25 @@ namespace {
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
     std::atomic<size_t> g_incoming_packet_samples{0};
+    std::atomic<bool> g_was_underflow{false};
 
-    // 초저지연 실시간 합주를 위한 지터 버퍼 한도 (최대 1.5 ~ 2 버퍼 분량, 약 5~10ms)
-    // P2P 다이렉트(RTT 1~2ms) 환경에 맞추어 큐 대기열 상시 지연(30ms 이상)을 제거하고 즉시 재생
+    // 아날로그 새츄레이션 기반 부드러운 소프트 리미터 (디지털 클리핑/지직거림 원천 차단)
+    inline int16_t soft_clip(float x) {
+        const float threshold = 28000.0f; // -1.3 dBFS까지 100% 무손실 선형 유지
+        const float max_val = 32767.0f;
+        if (x > threshold) {
+            float excess = x - threshold;
+            float compressed = threshold + (max_val - threshold) * std::tanh(excess / (max_val - threshold));
+            return static_cast<int16_t>(compressed > max_val ? max_val : compressed);
+        } else if (x < -threshold) {
+            float excess = -x - threshold;
+            float compressed = -(threshold + (32768.0f - threshold) * std::tanh(excess / (32768.0f - threshold)));
+            return static_cast<int16_t>(compressed < -32768.0f ? -32768.0f : compressed);
+        }
+        return static_cast<int16_t>(x);
+    }
+
+    // 초저지연 실시간 합주를 위한 지터 버퍼 기준점
     inline size_t get_target_queue_limit() {
         size_t local_samples = static_cast<size_t>(g_buffer_size * 2);
         size_t incoming = g_incoming_packet_samples.load();
@@ -123,9 +139,7 @@ namespace {
 
                 for (ma_uint32 i = 0; i < total_samples; ++i) {
                     float sample = in_pcm[i] * gain;
-                    if (sample > 32767.0f) sample = 32767.0f;
-                    if (sample < -32768.0f) sample = -32768.0f;
-                    int16_t s_int = static_cast<int16_t>(sample);
+                    int16_t s_int = soft_clip(sample);
                     processed_pcm[i] = s_int;
 
                     float norm = s_int / 32768.0f;
@@ -179,10 +193,28 @@ namespace {
             if (g_running.load()) {
                 std::lock_guard<std::mutex> lock(g_jitter_mutex);
 
-                // 지연 누적 방지(Catch-up): 큐가 목표 지터 한도를 초과할 때만 오래된 샘플 정리
-                size_t max_allowed_ahead = get_target_queue_limit();
-                while (g_playback_queue.size() > max_allowed_ahead) {
-                    g_playback_queue.pop_front();
+                size_t target_limit = get_target_queue_limit();
+                // 패킷 뭉침(Bunching)을 유연하게 수용하는 자연스러운 재생 대기열:
+                // 패킷이 뭉쳐서 도착해도 데이터를 강제로 버리지 않고 스피커로 자연스럽게 흘려보냅니다.
+                // 오직 시계 오차(Clock Drift)나 심각한 지연으로 대기열이 과도하게 쌓였을 때만(목표치의 4배 초과)
+                // 32샘플 미세 크로스페이드(Micro-Crossfade)로 클릭/디지털 클리핑 없이 매끄럽게 정리합니다.
+                size_t catchup_threshold = target_limit * 4;
+                if (catchup_threshold < 2048) catchup_threshold = 2048; // 최소 21ms 분량은 버스트 수용
+
+                if (g_playback_queue.size() > catchup_threshold) {
+                    // 미세 크로스페이드 정리: 급격한 pop_front로 인한 파형 단절(지직거림) 원천 방지
+                    const size_t xfade_len = 32;
+                    if (g_playback_queue.size() >= xfade_len * 2) {
+                        for (size_t i = 0; i < xfade_len; ++i) {
+                            float w_old = 1.0f - (static_cast<float>(i) / xfade_len);
+                            float w_new = static_cast<float>(i) / xfade_len;
+                            float blended = g_playback_queue[i] * w_old + g_playback_queue[i + xfade_len] * w_new;
+                            g_playback_queue[i + xfade_len] = soft_clip(blended);
+                        }
+                        for (size_t i = 0; i < xfade_len; ++i) {
+                            g_playback_queue.pop_front();
+                        }
+                    }
                 }
 
                 size_t available = g_playback_queue.size();
@@ -191,6 +223,30 @@ namespace {
                 for (size_t i = 0; i < to_read; ++i) {
                     out_pcm[i] = g_playback_queue.front();
                     g_playback_queue.pop_front();
+                }
+
+                // 언더런(데이터 부족) 발생 시 파형 급락 방지 (Soft Fade-Out)
+                // 소리가 뚝 끊겨 0으로 떨어지며 발생하는 퍽/지직 소리(Discontinuity) 제거
+                if (to_read < total_samples && to_read > 0) {
+                    size_t fade_samples = std::min(to_read, static_cast<size_t>(32));
+                    size_t start_fade = to_read - fade_samples;
+                    for (size_t i = 0; i < fade_samples; ++i) {
+                        float ramp = 1.0f - (static_cast<float>(i) / fade_samples);
+                        out_pcm[start_fade + i] = static_cast<int16_t>(out_pcm[start_fade + i] * ramp);
+                    }
+                    g_was_underflow.store(true);
+                } else if (to_read == total_samples) {
+                    // 언더런 복구 시 파형 급상승 방지 (Soft Fade-In)
+                    if (g_was_underflow.load()) {
+                        size_t fade_samples = std::min(to_read, static_cast<size_t>(32));
+                        for (size_t i = 0; i < fade_samples; ++i) {
+                            float ramp = static_cast<float>(i) / fade_samples;
+                            out_pcm[i] = static_cast<int16_t>(out_pcm[i] * ramp);
+                        }
+                        g_was_underflow.store(false);
+                    }
+                } else {
+                    g_was_underflow.store(true);
                 }
 
                 // 출력 RMS 레벨 계산
@@ -257,19 +313,17 @@ void network_receive_loop() {
                             }
                         }
 
-                        // 지터 큐에 추가
+                        // 지터 큐에 추가 (패킷이 뭉쳐서 도착해도 데이터를 버리지 않고 모두 수용)
                         {
                             std::lock_guard<std::mutex> q_lock(g_jitter_mutex);
                             for (int i = 0; i < samples; ++i) {
                                 float val = pcm[i] * vol;
-                                if (val > 32767.0f) val = 32767.0f;
-                                if (val < -32768.0f) val = -32768.0f;
-                                g_playback_queue.push_back(static_cast<int16_t>(val));
+                                g_playback_queue.push_back(soft_clip(val));
                             }
 
-                            // 초저지연 유지: 큐가 목표 한도를 초과하면 오래된 샘플을 즉시 버려서 실시간 유지
-                            size_t max_queue = get_target_queue_limit();
-                            while (g_playback_queue.size() > max_queue) {
+                            // 장치 중단/멈춤 시 비정상 메모리 누수 방지용 긴급 상한선 (약 150ms @ 48kHz Stereo)
+                            const size_t EMERGENCY_MAX_QUEUE = 14400;
+                            while (g_playback_queue.size() > EMERGENCY_MAX_QUEUE) {
                                 g_playback_queue.pop_front();
                             }
                         }
