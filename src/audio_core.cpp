@@ -98,35 +98,42 @@ namespace {
         ma_uint32 total_samples = frameCount * pDevice->capture.channels;
 
         // 1. 마이크 입력 처리 (Capture)
-        if (pInput != nullptr && g_running.load()) {
-            const int16_t* in_pcm = reinterpret_cast<const int16_t*>(pInput);
-            float gain = g_input_gain.load();
+        if (g_running.load()) {
+            ma_uint32 channels = (pDevice->capture.channels > 0) ? pDevice->capture.channels : 2;
+            total_samples = frameCount * channels;
+            std::vector<int16_t> processed_pcm(total_samples, 0);
 
-            std::vector<int16_t> processed_pcm(total_samples);
-            double sum_sq = 0.0;
+            if (pInput != nullptr) {
+                const int16_t* in_pcm = reinterpret_cast<const int16_t*>(pInput);
+                float gain = g_input_gain.load();
+                double sum_sq = 0.0;
 
-            for (ma_uint32 i = 0; i < total_samples; ++i) {
-                float sample = in_pcm[i] * gain;
-                if (sample > 32767.0f) sample = 32767.0f;
-                if (sample < -32768.0f) sample = -32768.0f;
-                int16_t s_int = static_cast<int16_t>(sample);
-                processed_pcm[i] = s_int;
+                for (ma_uint32 i = 0; i < total_samples; ++i) {
+                    float sample = in_pcm[i] * gain;
+                    if (sample > 32767.0f) sample = 32767.0f;
+                    if (sample < -32768.0f) sample = -32768.0f;
+                    int16_t s_int = static_cast<int16_t>(sample);
+                    processed_pcm[i] = s_int;
 
-                float norm = s_int / 32768.0f;
-                sum_sq += (norm * norm);
-            }
+                    float norm = s_int / 32768.0f;
+                    sum_sq += (norm * norm);
+                }
 
-            // 실제 RMS 입력 게인 레벨 계산
-            float rms = std::sqrt(sum_sq / (total_samples > 0 ? total_samples : 1));
-            float target_level = std::clamp(rms * 4.5f, 0.0f, 1.0f);
-            float current = g_in_level.load();
-            if (target_level > current) {
-                g_in_level.store(target_level);
+                // 실제 RMS 입력 게인 레벨 계산
+                float rms = std::sqrt(sum_sq / (total_samples > 0 ? total_samples : 1));
+                float target_level = std::clamp(rms * 4.5f, 0.0f, 1.0f);
+                float current = g_in_level.load();
+                if (target_level > current) {
+                    g_in_level.store(target_level);
+                } else {
+                    g_in_level.store(current * 0.82f + target_level * 0.18f);
+                }
             } else {
-                g_in_level.store(current * 0.82f + target_level * 0.18f);
+                // 마이크 미연결/권한 대기 시 입력 레벨 감쇄
+                g_in_level.store(g_in_level.load() * 0.75f);
             }
 
-            // UDP 오디오 패킷 생성 및 SFU 전송
+            // UDP 오디오 패킷 생성 및 SFU 전송 (마이크가 없거나 권한 대기 중이어도 세션 유지를 위해 무음 패킷 전송)
             if (g_sockfd != INVALID_SOCKET) {
                 AudioPacketHeader audio_header{};
                 audio_header.magic = SYNC_MAGIC;
@@ -136,7 +143,7 @@ namespace {
                 audio_header.sequence_num = ++g_sequence_counter;
                 audio_header.timestamp_us = get_time_us();
                 audio_header.sample_rate = static_cast<uint16_t>(g_sample_rate);
-                audio_header.channels = static_cast<uint8_t>(pDevice->capture.channels);
+                audio_header.channels = static_cast<uint8_t>(channels);
                 audio_header.bits_per_sample = 16;
                 audio_header.frame_count = static_cast<uint16_t>(frameCount);
                 audio_header.payload_bytes = static_cast<uint16_t>(total_samples * sizeof(int16_t));
@@ -149,9 +156,6 @@ namespace {
                        (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
                 g_tx_packets++;
             }
-        } else {
-            // 마이크가 비활성 상태일 때 감쇄
-            g_in_level.store(g_in_level.load() * 0.75f);
         }
 
         // 2. 스피커 출력 처리 (Playback)
@@ -322,7 +326,15 @@ extern "C" {
                 std::cout << "[AudioCore] Hardware audio duplex device successfully initialized via miniaudio (Buffer: " 
                           << g_buffer_size << ", Periods: 2)." << std::endl;
             } else {
-                std::cerr << "[AudioCore Warning] Failed to initialize hardware audio device." << std::endl;
+                std::cerr << "[AudioCore Warning] Failed to initialize duplex audio device. Trying playback-only fallback..." << std::endl;
+                config.deviceType = ma_device_type_playback;
+                if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
+                    g_ma_device_initialized.store(true);
+                    if (g_running.load()) {
+                        ma_device_start(&g_ma_device);
+                    }
+                    std::cout << "[AudioCore] Fallback: Playback-only audio device initialized." << std::endl;
+                }
             }
         }
 
@@ -400,6 +412,11 @@ extern "C" {
         // 백그라운드 수신 및 핑 스레드 시작
         g_network_thread = std::thread(network_receive_loop);
         g_ping_thread = std::thread(ping_loop);
+
+        // 만약 하드웨어 디바이스가 초기화되지 않았다면 재시도
+        if (!g_ma_device_initialized.load()) {
+            init_audio_engine(g_sample_rate, g_buffer_size);
+        }
 
         // 하드웨어 오디오 스트리밍 시작
         if (g_ma_device_initialized.load()) {
