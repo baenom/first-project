@@ -84,10 +84,11 @@ namespace {
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
-    // 네트워크 지터 흡수 버퍼: 패킷 출렁임(지터)을 유연하게 흡수하여 지직거림 방지 (약 40~60ms 한도)
+    // 초저지연 실시간 합주를 위한 지터 버퍼 한도 (최대 1.5 ~ 2 버퍼 분량, 약 5~10ms)
+    // 큐 누적으로 인한 고정 지연(30ms 이상)을 제거하고 즉시 재생
     inline size_t get_target_queue_limit() {
-        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 6);
-        return (limit < 3072) ? 3072 : limit;
+        size_t limit = static_cast<size_t>(g_buffer_size * 2 * 2);
+        return (limit < 512) ? 512 : limit;
     }
 
     uint64_t get_time_us() {
@@ -360,6 +361,13 @@ extern "C" {
             config.dataCallback = audio_data_callback;
             config.pUserData = nullptr;
             config.performanceProfile = ma_performance_profile_low_latency;
+#ifdef _WIN32
+            // 윈도우 OS 믹서 지연(20~30ms) 우회 및 Pro Audio 저지연 모드 적용
+            config.wasapi.usage = ma_wasapi_usage_pro_audio;
+            config.wasapi.noAutoConvertSRC = MA_TRUE;
+            config.wasapi.noDefaultQualitySRC = MA_TRUE;
+            config.wasapi.noHardwareOffloading = MA_TRUE;
+#endif
 
             if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
                 g_ma_device_initialized.store(true);
