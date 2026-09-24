@@ -1227,6 +1227,14 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     final bufferMs = (_audioEngine.bufferSize / 48.0).toStringAsFixed(2);
     final totalLatency = (_audioEngine.currentRtt + double.parse(bufferMs))
         .toStringAsFixed(1);
+    final rtt = _audioEngine.currentRtt;
+    final Color rttColor = rtt <= 30.0
+        ? const Color(0xFF23A55A)
+        : (rtt <= 80.0 ? const Color(0xFFFEE75C) : const Color(0xFFED4245));
+
+    final hostPublic = widget.hostPublicIp;
+    final hostLan = widget.hostLanIp;
+    final isRelaySuspected = rtt > 80.0 && !_isHost && (hostPublic.isNotEmpty || hostLan.isNotEmpty);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1272,12 +1280,12 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.speed, color: Color(0xFF23A55A), size: 18),
+                  Icon(Icons.speed, color: rttColor, size: 18),
                   const SizedBox(width: 6),
                   Text(
-                    'RTT 네트워크: ${_audioEngine.currentRtt.toStringAsFixed(1)}ms',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    'RTT 네트워크: ${rtt.toStringAsFixed(1)}ms',
+                    style: TextStyle(
+                      color: rttColor,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -1286,13 +1294,13 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF23A55A).withValues(alpha: 0.15),
+                      color: rttColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
                       '총 지연: 약 $totalLatency ms',
-                      style: const TextStyle(
-                        color: Color(0xFF23A55A),
+                      style: TextStyle(
+                        color: rttColor,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1300,6 +1308,50 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                   ),
                 ],
               ),
+              if (isRelaySuspected)
+                InkWell(
+                  onTap: () {
+                    final target = hostPublic.isNotEmpty ? hostPublic : hostLan;
+                    _audioEngine.configureSfu(
+                      target,
+                      widget.port,
+                      widget.roomId,
+                      _audioEngine.userId,
+                    );
+                    setState(() {});
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('⚡ 직결 IP ($target:${widget.port})로 즉시 전환되었습니다!'),
+                        backgroundColor: const Color(0xFF23A55A),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFED4245).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFED4245)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.bolt, color: Color(0xFFED4245), size: 14),
+                        SizedBox(width: 4),
+                        Text(
+                          '해외 중계 감지됨 ➔ 공인 IP 직결로 전환 (10ms 이하)',
+                          style: TextStyle(
+                            color: Color(0xFFED4245),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

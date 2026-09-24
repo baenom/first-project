@@ -219,33 +219,24 @@ namespace {
             if (g_running.load()) {
                 std::lock_guard<std::mutex> lock(g_jitter_mutex);
 
-                // 초저지연 실시간 합주를 위한 목표 큐 크기 (더블 버퍼링: 약 5~10ms):
-                // 128 버퍼: 512 샘플 (~5.3ms)
-                // 256 버퍼: 1024 샘플 (~10.6ms)
-                size_t target_queue = static_cast<size_t>(g_buffer_size * 2 * 2);
-                if (target_queue < 512) target_queue = 512;
-
-                // 시작 시 오디오 장치 구동 지연 플러시 (초기 연결 동안 적체된 묵은 패킷 즉시 제거)
+                // 1. 초기 구동 시 지연 플러시: 하드웨어 시작 시 누적된 묵은 패킷을
+                // 최신 15~20ms 분량만 남기고 정리하여 초기 지연 0 보장
                 if (g_first_playback.load()) {
                     g_first_playback.store(false);
-                    while (g_playback_queue.size() > target_queue && g_playback_queue.size() >= 2) {
+                    size_t initial_safe_target = static_cast<size_t>(g_buffer_size * 2 * 3);
+                    if (initial_safe_target < 1536) initial_safe_target = 1536;
+                    while (g_playback_queue.size() > initial_safe_target && g_playback_queue.size() >= 2) {
                         g_playback_queue.pop_front();
                         g_playback_queue.pop_front();
                     }
                 }
 
-                // 적응형 지연 자동 회수 (Adaptive Catch-Up):
-                // 네트워크 버스트로 인해 큐가 목표치를 128샘플(약 1.3ms) 초과했을 때,
-                // 콜백당 2샘플(1 스테레오 프레임 = 0.02ms)씩 미세하게 회수하여
-                // 귀로 인지 불가능한 상태에서 상시 초저지연(5~10ms) 상태를 유지
-                if (g_playback_queue.size() > target_queue + 128 && g_playback_queue.size() >= 2) {
-                    g_playback_queue.pop_front();
-                    g_playback_queue.pop_front();
-                }
-
-                // 지연 상한선(목표치의 3배 초과 시 즉시 최신화하여 고정 딜레이 방지)
-                size_t hard_ceiling = target_queue * 3;
-                while (g_playback_queue.size() > hard_ceiling && g_playback_queue.size() >= 2) {
+                // 2. 최대 지연 한도 (Max Latency Ceiling ~50ms):
+                // 일반적인 네트워크 지터(5~30ms)는 패킷을 전혀 버리지 않고 100% 온전하게 재생하여
+                // "지지직"거리는 디지털 클리핑 왜곡과 음 끊김을 원천 차단합니다.
+                // 네트워크 정체로 50ms 이상 적체될 때만 최신성을 위해 상한선 유지.
+                constexpr size_t MAX_SAFE_QUEUE = 4800; // ~50ms @ 48kHz stereo
+                while (g_playback_queue.size() > MAX_SAFE_QUEUE && g_playback_queue.size() >= 2) {
                     g_playback_queue.pop_front();
                     g_playback_queue.pop_front();
                 }
@@ -380,9 +371,9 @@ void network_receive_loop() {
                                 }
                             }
 
-                            // 수신 스레드 비상 상한선 (약 20ms @ 48kHz stereo)
-                            // 비정상적인 지연 누적을 원천 차단하고 항상 최신 실시간 오디오를 유지
-                            constexpr size_t EMERGENCY_MAX_QUEUE = 2048; // ~21ms
+                            // 수신 스레드 비상 상한선 (약 60ms @ 48kHz stereo)
+                            // 비정상적인 대규모 정체(네트워크 일시 단절 등) 시에만 안전하게 상한선 유지
+                            constexpr size_t EMERGENCY_MAX_QUEUE = 5760; // ~60ms
                             while (g_playback_queue.size() > EMERGENCY_MAX_QUEUE && g_playback_queue.size() >= 2) {
                                 g_playback_queue.pop_front();
                                 g_playback_queue.pop_front();
