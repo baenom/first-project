@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/audio_engine.dart';
 import '../services/upnp_service.dart';
 import '../services/zerotier_service.dart';
+import '../services/tailscale_service.dart';
 import '../services/deep_link_service.dart';
 import '../services/user_service.dart';
 
@@ -73,9 +74,10 @@ class JamRoomScreen extends StatefulWidget {
     if (remoteIp.isNotEmpty && remoteIp != '127.0.0.1') return remoteIp;
     // 3. 로컬 공유기/Wi-Fi LAN IP (동일 네트워크 시 1ms 미만)
     if (hostLanIp.isNotEmpty && hostLanIp != '127.0.0.1') return hostLanIp;
-    // 4. 가상 사설망(ZeroTier / Tailscale)은 공인 IP 직결 불가 시의 안전 폴백
-    if (hostZeroTierIp.isNotEmpty) return hostZeroTierIp;
-    return hostTailscaleIp;
+    // 4. Tailscale 가상 사설망 (대한민국 서울 DERP-9 초저지연 릴레이 지원: 10~20ms)
+    if (hostTailscaleIp.isNotEmpty && hostTailscaleIp != '127.0.0.1') return hostTailscaleIp;
+    // 5. ZeroTier 가상 회선 (보조 폴백)
+    return hostZeroTierIp;
   }
 
   @override
@@ -160,7 +162,31 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
       );
     }
 
-    // ZeroTier 1회용 가상 랜 자동 참여
+    // 1. Tailscale 초저지연 가상 회선 (서울 DERP 연동) 자동 참여
+    final tsKey = DeepLinkService().currentSession?.tsAuthKey;
+    TailscaleService().joinTailnet(authKey: tsKey).then((success) {
+      if (mounted) {
+        final virtualIp = TailscaleService().assignedVirtualIp.value;
+        if (virtualIp != null && virtualIp.isNotEmpty) {
+          if (_isHost && Firebase.apps.isNotEmpty) {
+            final docId = widget.roomDocId ?? 'discord-room-${widget.roomId}';
+            FirebaseFirestore.instance.collection('jam_rooms').doc(docId).set({
+              'hostTailscaleIp': virtualIp,
+            }, SetOptions(merge: true));
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('🛡️ Tailscale 가상 회선 연결 완료 (서울 DERP 연동: $virtualIp)'),
+              backgroundColor: const Color(0xFF23A55A),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        setState(() {});
+      }
+    });
+
+    // 2. ZeroTier 1회용 가상 랜 자동 참여 (보조 폴백)
     final ztNet = widget.ztNetworkId ?? DeepLinkService().currentSession?.ztNetworkId;
     if (ztNet != null && ztNet.isNotEmpty) {
       ZeroTierService().joinNetwork(ztNet).then((success) {
@@ -173,13 +199,6 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 'hostZeroTierIp': virtualIp,
               }, SetOptions(merge: true));
             }
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('🛡️ ZeroTier 1회용 가상 회선 연결 완료 (가상 IP: $virtualIp)'),
-                backgroundColor: const Color(0xFF23A55A),
-                duration: const Duration(seconds: 3),
-              ),
-            );
           }
           setState(() {});
         }
@@ -649,6 +668,20 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                 isPrimary: false,
                 copyValue: lan.isNotEmpty ? lan : '',
               ),
+              // Tailscale 1회용 가상 회선 (서울 DERP 릴레이) Chip
+              ValueListenableBuilder<String?>(
+                valueListenable: TailscaleService().assignedVirtualIp,
+                builder: (context, tsIp, _) {
+                  if (tsIp == null || tsIp.isEmpty) return const SizedBox.shrink();
+                  return _buildIpChip(
+                    label: 'Tailscale 초저지연 가상 IP (서울 DERP)',
+                    ip: '$tsIp:$port (활성)',
+                    icon: Icons.security,
+                    isPrimary: true,
+                    copyValue: tsIp,
+                  );
+                },
+              ),
               // ZeroTier 1회용 P2P 가상 회선 Chip
               ValueListenableBuilder<String?>(
                 valueListenable: ZeroTierService().assignedVirtualIp,
@@ -896,6 +929,50 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
                     );
                   },
                 ),
+              // Tailscale 1회용 P2P 가상 회선 (서울 DERP 릴레이) Chip
+              ValueListenableBuilder<String?>(
+                valueListenable: TailscaleService().assignedVirtualIp,
+                builder: (context, tsIp, _) {
+                  final hostTsIp = widget.hostTailscaleIp.isNotEmpty
+                      ? widget.hostTailscaleIp
+                      : '';
+                  final bool hasTsIp = tsIp != null && tsIp.isNotEmpty;
+                  if (!hasTsIp && hostTsIp.isEmpty) return const SizedBox.shrink();
+                  final String displayIp = hasTsIp
+                      ? '내 가상 IP: $tsIp' +
+                          (hostTsIp.isNotEmpty ? ' (방장: $hostTsIp:$port)' : '')
+                      : 'Tailscale 연결 대기 중...';
+
+                  return _buildIpChip(
+                    label: 'Tailscale 가상 회선 (서울 DERP-9 릴레이)',
+                    ip: displayIp,
+                    icon: Icons.security,
+                    isPrimary: hasTsIp,
+                    copyValue: hostTsIp.isNotEmpty ? hostTsIp : (tsIp ?? ''),
+                    onSelect: hostTsIp.isNotEmpty
+                        ? () {
+                            _audioEngine.configureSfu(
+                              hostTsIp,
+                              port,
+                              widget.roomId,
+                              _audioEngine.userId,
+                            );
+                            setState(() {});
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  '접속 IP가 방장 Tailscale IP ($hostTsIp:$port)로 변경되었습니다. (서울 DERP)',
+                                ),
+                                backgroundColor: const Color(0xFF23A55A),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          }
+                        : null,
+                  );
+                },
+              ),
               // ZeroTier 1회용 P2P 가상 회선 Chip
               ValueListenableBuilder<String?>(
                 valueListenable: ZeroTierService().assignedVirtualIp,

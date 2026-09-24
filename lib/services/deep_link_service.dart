@@ -13,6 +13,7 @@ class DeepLinkData {
   final String? hostIp;
   final int port;
   final String? ztNetworkId;
+  final String? tsAuthKey;
   final String rawUrl;
 
   const DeepLinkData({
@@ -24,12 +25,13 @@ class DeepLinkData {
     this.hostIp,
     this.port = 9999,
     this.ztNetworkId,
+    this.tsAuthKey,
     required this.rawUrl,
   });
 
   @override
   String toString() =>
-      'DeepLinkData(user: $userName, uid: $userId, room: #$roomId ($roomName), isHost: $isHost, ztNet: $ztNetworkId, hostIp: $hostIp:$port)';
+      'DeepLinkData(user: $userName, uid: $userId, room: #$roomId ($roomName), isHost: $isHost, tsKey: $tsAuthKey, ztNet: $ztNetworkId, hostIp: $hostIp:$port)';
 }
 
 class DeepLinkService {
@@ -128,6 +130,7 @@ class DeepLinkService {
       final hostIp = params['ip'] ?? params['hostIp'];
       final port = int.tryParse(params['port'] ?? '') ?? 9999;
       final ztNet = params['ztNet'] ?? params['networkId'] ?? params['zt'];
+      final tsKey = params['tsKey'] ?? params['tsAuthKey'] ?? params['ts'] ?? params['tailscale'];
 
       return DeepLinkData(
         userName: userName,
@@ -138,6 +141,7 @@ class DeepLinkService {
         hostIp: hostIp,
         port: port,
         ztNetworkId: ztNet != null && ztNet.trim().isNotEmpty ? ztNet.trim() : null,
+        tsAuthKey: tsKey != null && tsKey.trim().isNotEmpty ? tsKey.trim() : null,
         rawUrl: rawUrl,
       );
     } catch (e) {

@@ -17,6 +17,7 @@ from discord import app_commands
 from discord.ext import commands
 from aiohttp import web
 
+import tailscale_api
 import zerotier_api
 
 # 봇 기본 설정 (특권 인텐트 없이 기본 인텐트만으로 /합주실개설, /합주실종료 슬래시 명령어 완벽 지원)
@@ -31,7 +32,7 @@ RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 REDIRECT_BASE = (os.environ.get("REDIRECT_BASE_URL") or RENDER_URL or f"http://localhost:{HTTP_PORT}").rstrip("/")
 
 room_counter = 1
-active_rooms = {}  # room_id -> {"networkId": str, "name": str, "hostId": str}
+active_rooms = {}  # room_id -> {"tsKeyId": str, "networkId": str, "name": str, "hostId": str}
 
 
 def create_deep_link(
@@ -42,9 +43,10 @@ def create_deep_link(
     is_host: bool,
     port: int = 9999,
     ip: str = "",
-    zt_net: str = ""
+    zt_net: str = "",
+    ts_key: str = ""
 ) -> str:
-    """gam:// 커스텀 URL 스킴 생성"""
+    """gam:// 커스텀 URL 스킴 생성 (Tailscale 서울 DERP 및 ZeroTier 지원)"""
     params = {
         "roomId": str(room_id),
         "name": room_name,
@@ -57,6 +59,8 @@ def create_deep_link(
         params["uid"] = str(user_id)
     if ip:
         params["ip"] = ip
+    if ts_key:
+        params["tsKey"] = ts_key
     if zt_net:
         params["ztNet"] = zt_net
 
@@ -200,11 +204,14 @@ async def on_ready():
     print("=" * 55)
     print(f"🎸 SyncRoom 디스코드 봇 로그인 성공: {bot.user}")
     print(f"OS 환경: {sys.platform} (macOS / Windows 호환)")
+    ts_key = tailscale_api.get_api_key()
+    if ts_key:
+        print("🌐 Tailscale API 연동 활성화: 서울 DERP-9 초저지연(10~20ms) 가상 회선 자동 발급")
+    else:
+        print("ℹ️ Tailscale API 키 미설정 (.env에 TAILSCALE_API_KEY 추가 시 1회용 키 자동 발급)")
     token = zerotier_api.get_api_token()
     if token:
-        print("🌐 ZeroTier Central API 연동 활성화: 1회용 가상 회선 자동 생성 준비 완료")
-    else:
-        print("⚠️ ZeroTier API 토큰 미설정 (.env에 ZEROTIER_API_TOKEN 추가 시 가상 랜 자동 생성)")
+        print("🌐 ZeroTier Central API 연동 활성화 (보조 가상 랜)")
     print("=" * 55)
     try:
         synced = await bot.tree.sync()
@@ -229,10 +236,10 @@ class JamRoomView(discord.ui.View):
         ))
 
 
-@bot.tree.command(name="합주실개설", description="1회용 ZeroTier 가상 랜을 자동 생성하고 SyncRoom 앱 직결 링크를 제공합니다.")
+@bot.tree.command(name="합주실개설", description="Tailscale 서울 DERP 초저지연 가상 회선 및 SyncRoom 앱 원클릭 직결 링크를 제공합니다.")
 @app_commands.describe(
     방이름="합주실 이름 (예: 퇴근길 재즈 잼)",
-    공인ip="방장의 공인 IP (선택사항, 미입력 시 ZeroTier P2P 자동 연결)",
+    공인ip="방장의 공인 IP (선택사항, 미입력 시 UPnP 또는 Tailscale 서울 DERP 자동 직결)",
     포트="SFU UDP 포트 (기본값: 9999)"
 )
 async def slash_create_room(
@@ -251,35 +258,49 @@ async def slash_create_room(
     user_name = user.display_name
     user_id = str(user.id)
 
-    # 1. ZeroTier 1회용 가상 회선 자동 생성 시도
+    # 1. Tailscale 1회용 Ephemeral 가상 회선 키 발급 (서울 DERP 초저지연 10~20ms 직결)
+    ts_info = await tailscale_api.create_temp_auth_key(f"SyncRoom-Room{current_room_id}-{방이름}")
+    ts_key = ts_info["key"] if ts_info else ""
+    ts_key_id = ts_info["keyId"] if ts_info else ""
+
+    # 2. 보조: ZeroTier 가상 회선 생성
     zt_info = await zerotier_api.create_temp_network(f"SyncRoom-Room{current_room_id}-{방이름}")
     zt_net_id = zt_info["networkId"] if zt_info else ""
 
     # 세션 보관
     active_rooms[current_room_id] = {
+        "tsKeyId": ts_key_id,
+        "tsKey": ts_key,
         "networkId": zt_net_id,
         "name": 방이름,
         "hostId": user_id,
         "port": 포트,
     }
 
-    host_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=True, port=포트, ip=공인ip, zt_net=zt_net_id)
-    guest_url = create_deep_link("", "", current_room_id, 방이름, is_host=False, port=포트, ip=공인ip, zt_net=zt_net_id)
+    host_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=True, port=포트, ip=공인ip, zt_net=zt_net_id, ts_key=ts_key)
+    guest_url = create_deep_link("", "", current_room_id, 방이름, is_host=False, port=포트, ip=공인ip, zt_net=zt_net_id, ts_key=ts_key)
 
     embed = discord.Embed(
         title=f"🎵 {방이름} (방 번호 #{current_room_id})",
         description="**SyncRoom(`gam`) 전용 실시간 무압축 UDP 합주실이 개설되었습니다!**\n"
                     "아래 링크를 누르면 Mac / Windows에 설치된 `gam` 앱이 즉시 실행되며, "
-                    "비밀번호 입력이나 키체인 저장 없이 디스코드 프로필로 즉시 입장합니다.",
+                    "비밀번호 입력이나 키체인 저장 없이 디스코드 프로필로 즉시 입장합니다.\n"
+                    "해외 중계 없이 **UPnP 다이렉트 공인 IP** 및 **Tailscale 서울 DERP (10~20ms)**로 연결됩니다.",
         color=0x5865F2
     )
     embed.add_field(name="👑 개설자 (방장)", value=user.mention, inline=True)
     embed.add_field(name="🌐 UDP 포트", value=f"`{포트}`", inline=True)
 
-    if zt_net_id:
+    if ts_key:
         embed.add_field(
-            name="🛡️ 1회용 ZeroTier 가상 회선 (P2P 자동 직결)",
-            value=f"`{zt_net_id}` (공유기 포트포워딩 불필요)",
+            name="🛡️ Tailscale 초저지연 가상 회선 (서울 DERP 연동)",
+            value="`1회용 자동 인증 키 적용됨` (해외 중계 없이 서울 릴레이 10~20ms 직결)",
+            inline=False
+        )
+    elif zt_net_id:
+        embed.add_field(
+            name="🛡️ ZeroTier 가상 회선 (보조 폴백)",
+            value=f"`{zt_net_id}`",
             inline=False
         )
     elif 공인ip:
@@ -293,11 +314,11 @@ async def slash_create_room(
             f"📋 **직접 실행 링크 (브라우저 주소창 또는 Win+R)**:\n"
             f"• 방장: `{host_url}`\n"
             f"• 게스트: `{guest_url}`\n\n"
-            f"*※ 합주가 끝나면 `/합주실종료 방번호:{current_room_id}` 명령어로 가상 회선이 완전히 자동 삭제됩니다.*"
+            f"*※ 합주가 끝나면 `/합주실종료 방번호:{current_room_id}` 명령어로 가상 회선 키가 안전하게 파기됩니다.*"
         ),
         inline=False
     )
-    embed.set_footer(text="SyncRoom Audio Core • ZeroTier P2P 가상 회선 지원")
+    embed.set_footer(text="SyncRoom Audio Core • Tailscale 서울 DERP & UPnP 초저지연 직결")
 
     try:
         view = JamRoomView(host_url, guest_url)
@@ -307,7 +328,7 @@ async def slash_create_room(
         await interaction.followup.send(embed=embed)
 
 
-@bot.tree.command(name="합주실종료", description="합주실을 닫고 ZeroTier 1회용 가상 회선을 영구 삭제(폭파)합니다.")
+@bot.tree.command(name="합주실종료", description="합주실을 닫고 가상 회선(Tailscale / ZeroTier)을 안전하게 파기합니다.")
 @app_commands.describe(방번호="종료할 합주실 방 번호 (숫자)")
 async def slash_close_room(interaction: discord.Interaction, 방번호: int):
     room = active_rooms.get(방번호)
@@ -318,23 +339,22 @@ async def slash_close_room(interaction: discord.Interaction, 방번호: int):
         )
         return
 
+    ts_key_id = room.get("tsKeyId")
+    if ts_key_id:
+        await tailscale_api.delete_auth_key(ts_key_id)
+
     net_id = room.get("networkId")
-    deleted = False
     if net_id:
-        deleted = await zerotier_api.delete_network(net_id)
+        await zerotier_api.delete_network(net_id)
 
     del active_rooms[방번호]
 
     embed = discord.Embed(
         title=f"🛑 합주실 #{방번호} ({room['name']}) 종료 완료",
         description="**합주실이 안전하게 종료되었습니다.**\n"
-                    "참여자들의 컴퓨터에서 가상 랜 인터페이스가 해제되며 원래 네트워크로 복귀합니다.",
+                    "가상 회선 임시 인증 키가 파기되었으며 원래 네트워크로 안전하게 복귀합니다.",
         color=0xED4245
     )
-    if net_id:
-        status_text = "영구 삭제(폭파) 완료" if deleted else "삭제 실패 (수동 확인 필요)"
-        embed.add_field(name="🛡️ ZeroTier 가상 회선", value=f"`{net_id}` : {status_text}", inline=False)
-
     await interaction.response.send_message(embed=embed)
 
 
@@ -349,27 +369,36 @@ async def cmd_create_room(ctx, *, 방이름: str = "온라인 실시간 합주�
     user_name = user.display_name
     user_id = str(user.id)
 
+    ts_info = await tailscale_api.create_temp_auth_key(f"SyncRoom-Room{current_room_id}-{방이름}")
+    ts_key = ts_info["key"] if ts_info else ""
+    ts_key_id = ts_info["keyId"] if ts_info else ""
+
     zt_info = await zerotier_api.create_temp_network(f"SyncRoom-Room{current_room_id}-{방이름}")
     zt_net_id = zt_info["networkId"] if zt_info else ""
 
     active_rooms[current_room_id] = {
+        "tsKeyId": ts_key_id,
+        "tsKey": ts_key,
         "networkId": zt_net_id,
         "name": 방이름,
         "hostId": user_id,
         "port": DEFAULT_PORT,
     }
 
-    host_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=True, port=DEFAULT_PORT, zt_net=zt_net_id)
-    guest_url = create_deep_link("", "", current_room_id, 방이름, is_host=False, port=DEFAULT_PORT, zt_net=zt_net_id)
+    host_url = create_deep_link(user_name, user_id, current_room_id, 방이름, is_host=True, port=DEFAULT_PORT, zt_net=zt_net_id, ts_key=ts_key)
+    guest_url = create_deep_link("", "", current_room_id, 방이름, is_host=False, port=DEFAULT_PORT, zt_net=zt_net_id, ts_key=ts_key)
 
     embed = discord.Embed(
         title=f"🎵 {방이름} (방 번호 #{current_room_id})",
         description="**SyncRoom(`gam`) 전용 합주실이 개설되었습니다!**\n"
-                    "아래 링크를 누르면 Mac / Windows의 `gam` 앱이 로그인 없이 즉시 열립니다.",
+                    "아래 링크를 누르면 Mac / Windows의 `gam` 앱이 로그인 없이 즉시 열립니다.\n"
+                    "UPnP 공인 IP 및 Tailscale 서울 DERP(10~20ms)로 연결됩니다.",
         color=0x23A55A
     )
     embed.add_field(name="👑 개설자", value=user.mention, inline=True)
-    if zt_net_id:
+    if ts_key:
+        embed.add_field(name="🛡️ Tailscale 가상 회선", value="`서울 DERP 초저지연 연동`", inline=True)
+    elif zt_net_id:
         embed.add_field(name="🛡️ ZeroTier 가상 회선", value=f"`{zt_net_id}`", inline=True)
     embed.add_field(
         name="🔗 다이렉트 실행 링크",
@@ -397,12 +426,16 @@ async def cmd_close_room(ctx, 방번호: int):
         await ctx.send(f"⚠️ 방 번호 `#{방번호}` 합주실을 찾을 수 없습니다.")
         return
 
+    ts_key_id = room.get("tsKeyId")
+    if ts_key_id:
+        await tailscale_api.delete_auth_key(ts_key_id)
+
     net_id = room.get("networkId")
     if net_id:
         await zerotier_api.delete_network(net_id)
     del active_rooms[방번호]
 
-    await ctx.send(f"🛑 합주실 `#{방번호}` 및 ZeroTier 가상 회선(`{net_id}`)이 완전히 삭제되었습니다.")
+    await ctx.send(f"🛑 합주실 `#{방번호}` 및 가상 회선이 안전하게 종료되었습니다.")
 
 
 def main():

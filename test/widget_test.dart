@@ -291,7 +291,15 @@ void main() {
     expect(ztData.roomId, 10);
     expect(ztData.isHost, isFalse);
 
-    // 4. 잘못된 스킴 무시 테스트
+    // 4. Tailscale 1회용 Auth Key (서울 DERP) 파싱 테스트
+    const tsUrl =
+        'gam://jam?user=Bae&uid=12345&roomId=10&tsKey=tskey-auth-k987654321&isHost=true';
+    final tsData = service.parseUrl(tsUrl);
+    expect(tsData, isNotNull);
+    expect(tsData!.tsAuthKey, 'tskey-auth-k987654321');
+    expect(tsData.isHost, isTrue);
+
+    // 5. 잘못된 스킴 무시 테스트
     expect(service.parseUrl('https://example.com'), isNull);
   });
 

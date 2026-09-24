@@ -57,9 +57,10 @@ class JamRoom {
     if (remoteIp.isNotEmpty && remoteIp != '127.0.0.1') return remoteIp;
     // 3. 로컬 공유기/Wi-Fi LAN IP (동일 네트워크 시 1ms 미만)
     if (hostLanIp.isNotEmpty && hostLanIp != '127.0.0.1') return hostLanIp;
-    // 4. 가상 사설망(ZeroTier / Tailscale)은 공인 IP 직결 불가 시의 안전 폴백
-    if (hostZeroTierIp.isNotEmpty) return hostZeroTierIp;
-    return hostTailscaleIp;
+    // 4. Tailscale 가상 사설망 (대한민국 서울 DERP-9 초저지연 릴레이 지원: 10~20ms)
+    if (hostTailscaleIp.isNotEmpty && hostTailscaleIp != '127.0.0.1') return hostTailscaleIp;
+    // 5. ZeroTier 가상 회선 (보조 폴백)
+    return hostZeroTierIp;
   }
 
   static IconData iconFromCode(int code) {
