@@ -84,25 +84,30 @@ namespace {
     // 수신 오디오 지터 큐 (Thread-safe)
     std::mutex g_jitter_mutex;
     std::deque<int16_t> g_playback_queue;
+    std::atomic<size_t> g_incoming_packet_samples{0};
     int16_t g_last_playback_sample_L = 0;
     int16_t g_last_playback_sample_R = 0;
     bool g_playback_was_starving = false;
 
-    // 부드러운 아날로그 포화(Soft Saturation) 곡선:
-    // [-0.8, 0.8] 범위에서는 100% 완전 투명(선형),
-    // 0.8 초과 시 tanh 기반의 부드러운 곡선으로 라운딩하여
+    // 아날로그 새츄레이션 기반 부드러운 소프트 리미터:
+    // 정상 레벨(-2 dBFS 이하)에서는 100% 완전 투명(선형 유지),
+    // 초과 시 tanh 기반의 부드러운 아날로그 포화 곡선으로 라운딩하여
     // 귀를 찌르는 사각파 하드 클리핑("지지직" 디지털 왜곡)을 완벽하게 제거
-    inline int16_t soft_clip_s16(float sample) {
-        float x = sample / 32768.0f;
-        if (x > 0.8f) {
-            float d = x - 0.8f;
-            x = 0.8f + 0.199f * std::tanh(d * 5.0f);
-        } else if (x < -0.8f) {
-            float d = -x - 0.8f;
-            x = -(0.8f + 0.199f * std::tanh(d * 5.0f));
+    inline int16_t soft_clip(float x) {
+        const float threshold = 26214.0f; // -1.9 dBFS까지 100% 무손실 선형 유지
+        const float max_val = 32767.0f;
+        if (x > threshold) {
+            float excess = x - threshold;
+            float compressed = threshold + (max_val - threshold) * std::tanh(excess / (max_val - threshold));
+            return static_cast<int16_t>(compressed > max_val ? max_val : compressed);
+        } else if (x < -threshold) {
+            float excess = -x - threshold;
+            float compressed = -(threshold + (32768.0f - threshold) * std::tanh(excess / (32768.0f - threshold)));
+            return static_cast<int16_t>(compressed < -32768.0f ? -32768.0f : compressed);
         }
-        return static_cast<int16_t>(x * 32767.0f);
+        return static_cast<int16_t>(x);
     }
+    inline int16_t soft_clip_s16(float sample) { return soft_clip(sample); }
 
     // 초저지연 실시간 합주를 위한 지터 버퍼 한도 (기본 15~20ms)
     inline size_t get_target_queue_limit() {
@@ -142,7 +147,7 @@ namespace {
                         // 모노 마이크(맥북 내장 마이크 등) 입력을 좌/우 채널로 복제하여
                         // 2배속 칩멍크 왜곡 및 위상 반전 노이즈를 완벽 해결
                         float sample = in_pcm[f] * gain;
-                        int16_t s_int = soft_clip_s16(sample);
+                        int16_t s_int = soft_clip(sample);
                         processed_pcm[f * 2] = s_int;
                         processed_pcm[f * 2 + 1] = s_int;
 
@@ -315,6 +320,7 @@ void network_receive_loop() {
                         }
 
                         int samples = header->payload_bytes / sizeof(int16_t);
+                        g_incoming_packet_samples.store(static_cast<size_t>(samples));
                         const int16_t* pcm = reinterpret_cast<const int16_t*>(buffer + sizeof(AudioPacketHeader));
 
                         float vol = 1.0f;
@@ -454,29 +460,63 @@ extern "C" {
             config.pUserData = nullptr;
             config.performanceProfile = ma_performance_profile_low_latency;
 #ifdef _WIN32
-            // 윈도우 OS 믹서 지연(20~30ms) 우회 및 Pro Audio 저지연 모드 적용
+            // Windows 멀티미디어 실시간 스케줄러(MMCSS) "Pro Audio" 우선순위 등록 및 믹서 우회 플래그
             config.wasapi.usage = ma_wasapi_usage_pro_audio;
             config.wasapi.noAutoConvertSRC = MA_TRUE;
             config.wasapi.noDefaultQualitySRC = MA_TRUE;
             config.wasapi.noHardwareOffloading = MA_TRUE;
+
+            ma_result init_res = MA_ERROR;
+
+            // 1단계: Windows OS 사운드 믹서(audiodg.exe 20ms 지연)를 원천 우회하는 WASAPI Exclusive(단독) 모드 시도
+            config.playback.shareMode = ma_share_mode_exclusive;
+            config.capture.shareMode = ma_share_mode_exclusive;
+            init_res = ma_device_init(nullptr, &config, &g_ma_device);
+
+            if (init_res == MA_SUCCESS) {
+                std::cout << "[AudioCore] Hardware audio duplex initialized in WASAPI Exclusive Mode (Zero OS Mixer Latency)." << std::endl;
+            } else {
+                // 2단계: 양방향 Exclusive가 불가할 경우 출력 Exclusive + 입력 Shared 시도
+                config.playback.shareMode = ma_share_mode_exclusive;
+                config.capture.shareMode = ma_share_mode_shared;
+                init_res = ma_device_init(nullptr, &config, &g_ma_device);
+
+                if (init_res == MA_SUCCESS) {
+                    std::cout << "[AudioCore] Hardware audio duplex initialized with Playback Exclusive Mode." << std::endl;
+                } else {
+                    // 3단계: Exclusive가 불가능한 경우 (타 앱 점유 등) IAudioClient3 초저지연 Shared + Pro Audio MMCSS 모드로 안전 폴백
+                    config.playback.shareMode = ma_share_mode_shared;
+                    config.capture.shareMode = ma_share_mode_shared;
+                    init_res = ma_device_init(nullptr, &config, &g_ma_device);
+
+                    if (init_res == MA_SUCCESS) {
+                        std::cout << "[AudioCore] Hardware audio duplex initialized in WASAPI Low-Latency Shared Mode (Pro Audio MMCSS)." << std::endl;
+                    }
+                }
+            }
+#else
+            ma_result init_res = ma_device_init(nullptr, &config, &g_ma_device);
 #endif
 
-            if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
+            if (init_res == MA_SUCCESS) {
                 g_ma_device_initialized.store(true);
                 if (g_running.load()) {
                     ma_device_start(&g_ma_device);
                 }
-                std::cout << "[AudioCore] Hardware audio duplex device successfully initialized via miniaudio (Buffer: " 
+                std::cout << "[AudioCore] Hardware audio duplex device successfully started (Buffer: " 
                           << g_buffer_size << ", Periods: 2)." << std::endl;
             } else {
                 std::cerr << "[AudioCore Warning] Failed to initialize duplex audio device. Trying playback-only fallback..." << std::endl;
                 config.deviceType = ma_device_type_playback;
+                config.playback.shareMode = ma_share_mode_shared;
                 if (ma_device_init(nullptr, &config, &g_ma_device) == MA_SUCCESS) {
                     g_ma_device_initialized.store(true);
                     if (g_running.load()) {
                         ma_device_start(&g_ma_device);
                     }
                     std::cout << "[AudioCore] Fallback: Playback-only audio device initialized." << std::endl;
+                } else {
+                    std::cerr << "[AudioCore Warning] Failed to initialize playback audio device. Result: " << init_res << std::endl;
                 }
             }
         }
@@ -762,7 +802,7 @@ extern "C" {
                     for (auto& pair : rooms) {
                         auto& list = pair.second;
                         for (auto it = list.begin(); it != list.end(); ) {
-                            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->last_seen).count() > 3) {
+                            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->last_seen).count() > 5) {
                                 std::cout << "[Embedded SFU Room " << pair.first << "] Peer timeout: User " << it->user_id << std::endl;
                                 it = list.erase(it);
                             } else {
