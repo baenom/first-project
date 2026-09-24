@@ -67,10 +67,14 @@ class JamRoomScreen extends StatefulWidget {
   });
 
   String get effectivePublicIp {
-    if (hostZeroTierIp.isNotEmpty) return hostZeroTierIp;
+    // 1. 방장의 공인 IP (UPnP 공유기 직결 또는 포트포워딩): 국내 3~15ms 초저지연 직결 우선
+    if (hostPublicIp.isNotEmpty && hostPublicIp != '127.0.0.1') return hostPublicIp;
+    // 2. 수동 지정된 remoteIp
     if (remoteIp.isNotEmpty && remoteIp != '127.0.0.1') return remoteIp;
-    if (hostPublicIp.isNotEmpty) return hostPublicIp;
-    if (hostLanIp.isNotEmpty) return hostLanIp;
+    // 3. 로컬 공유기/Wi-Fi LAN IP (동일 네트워크 시 1ms 미만)
+    if (hostLanIp.isNotEmpty && hostLanIp != '127.0.0.1') return hostLanIp;
+    // 4. 가상 사설망(ZeroTier / Tailscale)은 공인 IP 직결 불가 시의 안전 폴백
+    if (hostZeroTierIp.isNotEmpty) return hostZeroTierIp;
     return hostTailscaleIp;
   }
 
@@ -288,7 +292,8 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     super.didUpdateWidget(oldWidget);
     if (!_isHost &&
         (widget.hostZeroTierIp != oldWidget.hostZeroTierIp ||
-            widget.remoteIp != oldWidget.remoteIp) &&
+            widget.remoteIp != oldWidget.remoteIp ||
+            widget.hostPublicIp != oldWidget.hostPublicIp) &&
         widget.effectivePublicIp.isNotEmpty) {
       _audioEngine.configureSfu(
         widget.effectivePublicIp,

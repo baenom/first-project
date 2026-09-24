@@ -71,6 +71,7 @@ namespace {
     // 네트워크 소켓 및 스레드
     SOCKET g_sockfd = INVALID_SOCKET;
     sockaddr_in g_sfu_addr{};
+    std::mutex g_socket_send_mutex;
     std::thread g_network_thread;
     std::thread g_ping_thread;
 
@@ -203,8 +204,11 @@ namespace {
                 std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
                 std::memcpy(packet.data() + sizeof(AudioPacketHeader), processed_pcm.data(), audio_header.payload_bytes);
 
-                sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
-                       (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+                {
+                    std::lock_guard<std::mutex> sock_lock(g_socket_send_mutex);
+                    sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
+                           (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+                }
                 g_tx_packets++;
             }
         } else if (g_running.load() && pInput == nullptr && pOutput == nullptr) {
@@ -414,8 +418,11 @@ void fallback_silence_tx_loop() {
             std::memcpy(packet.data(), &audio_header, sizeof(AudioPacketHeader));
             std::memcpy(packet.data() + sizeof(AudioPacketHeader), silence_pcm.data(), audio_header.payload_bytes);
 
-            sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
-                   (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            {
+                std::lock_guard<std::mutex> sock_lock(g_socket_send_mutex);
+                sendto(g_sockfd, (const char*)packet.data(), static_cast<int>(packet.size()), 0,
+                       (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            }
             g_tx_packets++;
         }
         int sleep_ms = (g_buffer_size * 1000) / (g_sample_rate > 0 ? g_sample_rate : 48000);
@@ -424,7 +431,7 @@ void fallback_silence_tx_loop() {
     }
 }
 
-// 500ms 주기 핑 전송 루프 (RTT 측정용 및 Keep-Alive)
+// 주기적 핑 전송 루프 (2000ms 주기: RTT 측정 및 세션 유지)
 void ping_loop() {
     while (g_running) {
         if (g_sockfd != INVALID_SOCKET) {
@@ -434,11 +441,14 @@ void ping_loop() {
             ping_header.room_id = g_room_id;
             ping_header.user_id = g_user_id;
             ping_header.timestamp_us = get_time_us();
-            sendto(g_sockfd, (const char*)&ping_header, sizeof(ping_header), 0,
-                   (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            {
+                std::lock_guard<std::mutex> sock_lock(g_socket_send_mutex);
+                sendto(g_sockfd, (const char*)&ping_header, sizeof(ping_header), 0,
+                       (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            }
             g_tx_packets++;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     }
 }
 
@@ -610,8 +620,11 @@ extern "C" {
         join_header.room_id = g_room_id;
         join_header.user_id = g_user_id;
         join_header.timestamp_us = get_time_us();
-        sendto(g_sockfd, (const char*)&join_header, sizeof(join_header), 0,
-               (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+        {
+            std::lock_guard<std::mutex> sock_lock(g_socket_send_mutex);
+            sendto(g_sockfd, (const char*)&join_header, sizeof(join_header), 0,
+                   (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+        }
         g_tx_packets++;
 
         // 백그라운드 수신, 핑, 백업 무음 송신 스레드 시작
@@ -655,8 +668,11 @@ extern "C" {
             leave_header.room_id = g_room_id;
             leave_header.user_id = g_user_id;
             leave_header.timestamp_us = get_time_us();
-            sendto(g_sockfd, (const char*)&leave_header, sizeof(leave_header), 0,
-                   (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            {
+                std::lock_guard<std::mutex> sock_lock(g_socket_send_mutex);
+                sendto(g_sockfd, (const char*)&leave_header, sizeof(leave_header), 0,
+                       (struct sockaddr*)&g_sfu_addr, sizeof(g_sfu_addr));
+            }
 
             closesocket(g_sockfd);
             g_sockfd = INVALID_SOCKET;
