@@ -43,6 +43,7 @@ class JamRoomScreen extends StatefulWidget {
   final String hostTailscaleIp;
   final String hostLanIp;
   final String hostZeroTierIp;
+  final String remoteIp;
   final int port;
   final String? ztNetworkId;
 
@@ -60,13 +61,17 @@ class JamRoomScreen extends StatefulWidget {
     this.hostTailscaleIp = '',
     this.hostLanIp = '',
     this.hostZeroTierIp = '',
+    this.remoteIp = '',
     this.port = 9999,
     this.ztNetworkId,
   });
 
-  String get effectivePublicIp => hostZeroTierIp.isNotEmpty
-      ? hostZeroTierIp
-      : (hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp);
+  String get effectivePublicIp {
+    if (hostZeroTierIp.isNotEmpty) return hostZeroTierIp;
+    if (remoteIp.isNotEmpty && remoteIp != '127.0.0.1') return remoteIp;
+    if (hostPublicIp.isNotEmpty) return hostPublicIp;
+    return hostTailscaleIp;
+  }
 
   @override
   State<JamRoomScreen> createState() => _JamRoomScreenState();
@@ -281,10 +286,11 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   void didUpdateWidget(JamRoomScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!_isHost &&
-        widget.hostZeroTierIp != oldWidget.hostZeroTierIp &&
-        widget.hostZeroTierIp.isNotEmpty) {
+        (widget.hostZeroTierIp != oldWidget.hostZeroTierIp ||
+            widget.remoteIp != oldWidget.remoteIp) &&
+        widget.effectivePublicIp.isNotEmpty) {
       _audioEngine.configureSfu(
-        widget.hostZeroTierIp,
+        widget.effectivePublicIp,
         widget.port,
         widget.roomId,
         _audioEngine.userId,

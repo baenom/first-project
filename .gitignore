@@ -48,6 +48,8 @@ app.*.map.json
 
 # Native and C++ build artifacts
 src/build/
+dist/
+*.zip
 *.dylib
 *.dll
 *.so

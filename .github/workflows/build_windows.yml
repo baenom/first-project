@@ -2,7 +2,7 @@ name: Build Windows Release
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feat/**', 'feature/**', 'windows*' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -63,9 +63,32 @@ jobs:
           Compress-Archive -Path "$releaseDir\*" -DestinationPath "gam-windows-x64.zip" -Force
           Write-Host "gam-windows-x64.zip created successfully."
 
-      - name: Upload Windows Artifact
+      - name: Upload Windows Artifact (Zip)
         uses: actions/upload-artifact@v4
         with:
           name: gam-windows-x64
           path: gam-windows-x64.zip
+
+      - name: Build Windows Installer (.exe)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path "build" -Filter "gam.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "gam.exe was not found in build folder!"
+            exit 1
+          }
+          $releaseDir = $exe.DirectoryName
+          New-Item -ItemType Directory -Path "build\windows_release" -Force
+          Copy-Item -Path "$releaseDir\*" -Destination "build\windows_release" -Recurse -Force
+
+          choco install innosetup -y --no-progress
+          $iscc = (Get-ChildItem -Path "C:\Program Files*", "C:\ProgramData\chocolatey\bin" -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          Write-Host "Found ISCC at: $iscc"
+          & $iscc "windows/installer.iss"
+
+      - name: Upload Windows Installer (.exe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gam-setup-installer
+          path: dist/gam-setup-1.0.0.exe
 

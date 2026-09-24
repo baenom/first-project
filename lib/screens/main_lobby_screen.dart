@@ -50,9 +50,12 @@ class JamRoom {
     this.ztNetworkId,
   });
 
-  String get effectivePublicIp => hostZeroTierIp.isNotEmpty
-      ? hostZeroTierIp
-      : (hostPublicIp.isNotEmpty ? hostPublicIp : hostTailscaleIp);
+  String get effectivePublicIp {
+    if (hostZeroTierIp.isNotEmpty) return hostZeroTierIp;
+    if (remoteIp.isNotEmpty && remoteIp != '127.0.0.1') return remoteIp;
+    if (hostPublicIp.isNotEmpty) return hostPublicIp;
+    return hostTailscaleIp;
+  }
 
   static IconData iconFromCode(int code) {
     if (code == Icons.music_note.codePoint) return Icons.music_note;
@@ -2186,6 +2189,7 @@ class _MainLobbyScreenState extends State<MainLobbyScreen> {
           hostTailscaleIp: _currentRoom.hostTailscaleIp,
           hostLanIp: _currentRoom.hostLanIp,
           hostZeroTierIp: _currentRoom.hostZeroTierIp,
+          remoteIp: _currentRoom.remoteIp,
           port: _currentRoom.port,
           ztNetworkId: _currentRoom.ztNetworkId,
           onToggleJam: _toggleJamming,
