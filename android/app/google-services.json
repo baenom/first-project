@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "666506646890",
+    "project_id": "gam-90491",
+    "storage_bucket": "gam-90491.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:666506646890:android:2d894f98eca3a47a088113",
+        "android_client_info": {
+          "package_name": "com.example.gam"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrB_t4i6hWGYHwok7ORhKdamBSOMZ3tTI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
