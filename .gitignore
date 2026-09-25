@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # What a project can make again, and nobody needs to keep.
 node_modules/
 .venv/
@@ -13,13 +12,11 @@ DerivedData/
 .cache/
 .DS_Store
 *.log
-=======
+
 # Miscellaneous
 *.class
-*.log
 *.pyc
 *.swp
-.DS_Store
 .atom/
 .build/
 .buildlog/
@@ -35,11 +32,6 @@ migrate_working_dir/
 *.ipr
 *.iws
 .idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/
@@ -69,5 +61,3 @@ dist/
 *.dylib
 *.dll
 *.so
-
->>>>>>> upstream/main
