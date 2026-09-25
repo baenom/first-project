@@ -47,6 +47,30 @@ typedef IsSfuRunningDart = int Function();
 typedef GetSfuPeerCountNative = ffi.Int32 Function();
 typedef GetSfuPeerCountDart = int Function();
 
+// P2P (오각별 Full-Mesh) FFI 시그니처 정의
+typedef SetLocalPortNative = ffi.Void Function(ffi.Int32);
+typedef SetLocalPortDart = void Function(int);
+
+typedef SetMyIdentityNative = ffi.Void Function(ffi.Int32, ffi.Int32);
+typedef SetMyIdentityDart = void Function(int, int);
+
+typedef AddP2pPeerNative = ffi.Void Function(
+    ffi.Int32, ffi.Pointer<Utf8>, ffi.Int32);
+typedef AddP2pPeerDart = void Function(
+    int, ffi.Pointer<Utf8>, int);
+
+typedef RemoveP2pPeerNative = ffi.Void Function(ffi.Int32);
+typedef RemoveP2pPeerDart = void Function(int);
+
+typedef ClearP2pPeersNative = ffi.Void Function();
+typedef ClearP2pPeersDart = void Function();
+
+typedef GetP2pPeerCountNative = ffi.Int32 Function();
+typedef GetP2pPeerCountDart = int Function();
+
+typedef GetP2pPeerRttNative = ffi.Float Function(ffi.Int32);
+typedef GetP2pPeerRttDart = double Function(int);
+
 class AudioStats {
   final double rttMs;
   final double inputLevel;
