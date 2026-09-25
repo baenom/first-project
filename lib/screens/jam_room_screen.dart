@@ -206,14 +206,29 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
     }
   }
 
-  void _syncPresence() {
+  void _syncPresence() async {
+    _audioEngine.setMyIdentity(widget.roomId, _audioEngine.userId);
+    _audioEngine.setLocalPort(widget.port);
+
     if (Firebase.apps.isEmpty) return;
     try {
       final user = FirebaseAuth.instance.currentUser;
       final uid = user?.uid ?? 'anon_${_audioEngine.userId}';
       final docId = widget.roomDocId ?? widget.roomId.toString();
 
-      FirebaseFirestore.instance
+      // 내 공인 및 사설 IP 감지
+      final detectedIps = await _audioEngine.detectHostIps();
+      final myPublicIp = _upnpService.publicIp.isNotEmpty
+          ? _upnpService.publicIp
+          : widget.effectivePublicIp;
+      final myTailscaleIp = TailscaleService().assignedVirtualIp.value ??
+          detectedIps['tailscale'] ??
+          widget.hostTailscaleIp;
+      final myLanIp = _upnpService.localLanIp.isNotEmpty
+          ? _upnpService.localLanIp
+          : (detectedIps['lan'] ?? widget.hostLanIp);
+
+      await FirebaseFirestore.instance
           .collection('jam_rooms')
           .doc(docId)
           .collection('members')
@@ -224,8 +239,12 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
         'userId': _audioEngine.userId,
         'isHost': _isHost,
         'instrument': _isHost ? '방장 (호스트)' : '합주 세션 멤버',
+        'publicIp': myPublicIp,
+        'tailscaleIp': myTailscaleIp,
+        'lanIp': myLanIp,
+        'port': widget.port,
         'joinedAt': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
 
       _membersSub = FirebaseFirestore.instance
           .collection('jam_rooms')
@@ -242,17 +261,51 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
           audioInterface: 'CoreAudio / ASIO 연결됨',
         ));
 
+        final activeUserIds = <int>{};
+
         for (final doc in snapshot.docs) {
           if (doc.id == uid) continue;
           final data = doc.data();
           final peerUserId = (data['userId'] as int?) ?? 102;
+          activeUserIds.add(peerUserId);
+
           final name = (data['name'] as String?) ?? '합주자';
           final instrument = (data['instrument'] as String?) ?? '합주 멤버';
+          final peerPublicIp = (data['publicIp'] as String?) ?? '';
+          final peerTailscaleIp = (data['tailscaleIp'] as String?) ?? '';
+          final peerLanIp = (data['lanIp'] as String?) ?? '';
+          final peerPort = (data['port'] as int?) ?? widget.port;
+
+          // P2P Full-Mesh(오각별) 최적 경로 IP 선택 알고리즘:
+          // 1. Tailscale 가상 IP (동일 가상망 시 NAT 100% 무조건 관통 초저지연)
+          // 2. 사설 LAN IP (동일 공유기 내 <1ms)
+          // 3. 공인 IP (공유기 직결/UPnP)
+          String targetPeerIp = '';
+          if (myTailscaleIp.isNotEmpty && peerTailscaleIp.isNotEmpty) {
+            targetPeerIp = peerTailscaleIp;
+          } else if (peerLanIp.isNotEmpty && myLanIp.isNotEmpty &&
+                     peerLanIp.split('.').take(3).join('.') == myLanIp.split('.').take(3).join('.')) {
+            targetPeerIp = peerLanIp;
+          } else if (peerPublicIp.isNotEmpty && peerPublicIp != '127.0.0.1') {
+            targetPeerIp = peerPublicIp;
+          } else if (peerLanIp.isNotEmpty) {
+            targetPeerIp = peerLanIp;
+          } else if (widget.effectivePublicIp.isNotEmpty) {
+            targetPeerIp = widget.effectivePublicIp;
+          }
+
+          if (targetPeerIp.isNotEmpty) {
+            // C++ 엔진에 오각별 P2P 피어 등록 및 실시간 홀펀칭 즉시 개시
+            _audioEngine.addP2pPeer(peerUserId, targetPeerIp, peerPort);
+          }
+
           newPeers.add(PeerState(
             userId: peerUserId,
             name: name,
             instrument: instrument,
-            audioInterface: '실시간 스트리밍 연결됨',
+            audioInterface: targetPeerIp.isNotEmpty
+                ? 'P2P 직결: $targetPeerIp:$peerPort'
+                : 'P2P 연결 대기중...',
           ));
         }
 
@@ -271,6 +324,7 @@ class _JamRoomScreenState extends State<JamRoomScreen> {
   @override
   void dispose() {
     _membersSub?.cancel();
+    _audioEngine.clearP2pPeers();
     if (Firebase.apps.isNotEmpty) {
       try {
         final user = FirebaseAuth.instance.currentUser;

@@ -108,6 +108,19 @@ class AudioEngine extends ChangeNotifier {
   IsSfuRunningDart? _isSfuRunning;
   GetSfuPeerCountDart? _getSfuPeerCount;
 
+  // P2P (오각별 Mesh) FFI 바인딩
+  SetLocalPortDart? _setLocalPort;
+  SetMyIdentityDart? _setMyIdentity;
+  AddP2pPeerDart? _addP2pPeer;
+  RemoveP2pPeerDart? _removeP2pPeer;
+  ClearP2pPeersDart? _clearP2pPeers;
+  GetP2pPeerCountDart? _getP2pPeerCount;
+  GetP2pPeerRttDart? _getP2pPeerRtt;
+
+  // 로컬 바인딩 포트
+  int _localPort = 9999;
+  int get localPort => _localPort;
+
   // 로컬 SFU 호스트 상태
   bool _isSfuServerRunning = false;
   bool get isSfuServerRunning => _isSfuServerRunning;
@@ -260,6 +273,33 @@ class AudioEngine extends ChangeNotifier {
               .asFunction<GetNetworkStatsDart>();
         } catch (e) {
           debugPrint("[AudioEngine] Network stats optional lookup note: $e");
+        }
+
+        try {
+          _setLocalPort = _dylib!
+              .lookup<ffi.NativeFunction<SetLocalPortNative>>('set_local_port')
+              .asFunction<SetLocalPortDart>();
+          _setMyIdentity = _dylib!
+              .lookup<ffi.NativeFunction<SetMyIdentityNative>>('set_my_identity')
+              .asFunction<SetMyIdentityDart>();
+          _addP2pPeer = _dylib!
+              .lookup<ffi.NativeFunction<AddP2pPeerNative>>('add_p2p_peer')
+              .asFunction<AddP2pPeerDart>();
+          _removeP2pPeer = _dylib!
+              .lookup<ffi.NativeFunction<RemoveP2pPeerNative>>('remove_p2p_peer')
+              .asFunction<RemoveP2pPeerDart>();
+          _clearP2pPeers = _dylib!
+              .lookup<ffi.NativeFunction<ClearP2pPeersNative>>('clear_p2p_peers')
+              .asFunction<ClearP2pPeersDart>();
+          _getP2pPeerCount = _dylib!
+              .lookup<ffi.NativeFunction<GetP2pPeerCountNative>>('get_p2p_peer_count')
+              .asFunction<GetP2pPeerCountDart>();
+          _getP2pPeerRtt = _dylib!
+              .lookup<ffi.NativeFunction<GetP2pPeerRttNative>>('get_p2p_peer_rtt')
+              .asFunction<GetP2pPeerRttDart>();
+          debugPrint("[AudioEngine] P2P Mesh C++ symbols successfully bound.");
+        } catch (e) {
+          debugPrint("[AudioEngine] P2P symbols optional lookup note: $e");
         }
 
         _isNativeLoaded = true;
@@ -458,6 +498,65 @@ class AudioEngine extends ChangeNotifier {
     if (_isNativeLoaded && _setInputGain != null) {
       _setInputGain!(gain);
     }
+  }
+
+  /// P2P (오각별 Mesh): 내 로컬 UDP 바인딩 포트 설정
+  void setLocalPort(int port) {
+    _localPort = port;
+    if (_isNativeLoaded && _setLocalPort != null) {
+      _setLocalPort!(port);
+    }
+  }
+
+  /// P2P: 내 룸 및 유저 ID 설정
+  void setMyIdentity(int roomId, int userId) {
+    _roomId = roomId;
+    _userId = userId;
+    if (_isNativeLoaded && _setMyIdentity != null) {
+      _setMyIdentity!(roomId, userId);
+    }
+  }
+
+  /// P2P (오각별 Mesh): 상대방 피어 추가 및 홀펀칭 패킷 자동 송신
+  void addP2pPeer(int peerUserId, String ip, int port) {
+    if (ip.isEmpty || port <= 0) return;
+    if (_isNativeLoaded && _addP2pPeer != null) {
+      final ipPtr = ip.toNativeUtf8();
+      _addP2pPeer!(peerUserId, ipPtr, port);
+      calloc.free(ipPtr);
+      debugPrint("[AudioEngine P2P] Added peer: User $peerUserId -> $ip:$port");
+    }
+  }
+
+  /// P2P: 상대방 피어 제거
+  void removeP2pPeer(int peerUserId) {
+    if (_isNativeLoaded && _removeP2pPeer != null) {
+      _removeP2pPeer!(peerUserId);
+      debugPrint("[AudioEngine P2P] Removed peer: User $peerUserId");
+    }
+  }
+
+  /// P2P: 모든 피어 제거
+  void clearP2pPeers() {
+    if (_isNativeLoaded && _clearP2pPeers != null) {
+      _clearP2pPeers!();
+    }
+  }
+
+  /// P2P: 현재 등록된 피어 수
+  int getP2pPeerCount() {
+    if (_isNativeLoaded && _getP2pPeerCount != null) {
+      return _getP2pPeerCount!();
+    }
+    return 0;
+  }
+
+  /// P2P: 특정 피어와의 RTT(ms) 지연시간 조회
+  double getP2pPeerRtt(int peerUserId) {
+    if (_isNativeLoaded && _getP2pPeerRtt != null) {
+      return _getP2pPeerRtt!(peerUserId);
+    }
+    return 0.0;
   }
 
   void _startStatsPolling() {
